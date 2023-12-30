@@ -1,0 +1,11 @@
+[package]
+name = "scalp"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "*"
+scalp_macro = { path = "./scalp_macro" }
+
+[workspace]
+members = [ "scalp_core", "scalp_macro", "scalp_core" ]
