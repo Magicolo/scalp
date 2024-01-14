@@ -1,10 +1,17 @@
 [package]
 name = "scalp"
 version = "0.1.0"
+authors = ["Magicolo <magicololand@gmail.com>"]
 edition = "2021"
+description = "A declarative, macro-less parsing library for command-line interfaces. It provides a highly composable and extensible `Parse` trait that ensures comparative performance to a macro-full approach while offering greater flexibility and understandability."
+readme = "README.md"
+documentation = "https://docs.rs/scalp/latest/scalp/"
+license = "MIT"
 
 [dependencies]
 anyhow = "*"
+orn = "*"
+scalp_core = { path = "./scalp_core" }
 scalp_macro = { path = "./scalp_macro" }
 
 [workspace]

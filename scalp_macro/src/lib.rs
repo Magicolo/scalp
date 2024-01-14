@@ -1,37 +1,57 @@
 use proc_macro::TokenStream;
-use quote::{__private::Span, quote};
-use syn::{parse_macro_input, punctuated::Punctuated, DeriveInput, Ident, Path};
+use scalp_core::case::Case;
 
-#[proc_macro_derive(Parse)]
-pub fn parse(input: TokenStream) -> TokenStream {
-    let DeriveInput {
-        ident,
-        generics,
-        attrs,
-        data,
-        vis,
-    } = parse_macro_input!(input as DeriveInput);
-    let parse_path = path(["scalp", "Parse"]);
-    let context_path = path(["scalp", "Context"]);
-    let error_path = path(["scalp", "Error"]);
-    let write_path = path(["std", "io", "Write"]);
+#[proc_macro]
+pub fn to_string(input: TokenStream) -> TokenStream {
+    use proc_macro::{Literal, TokenTree};
 
-    quote!(impl #parse_path for #ident #generics {
-        fn parse(#context_path { arguments, environment }: &mut #context_path) -> Result<Self, #error_path> {
-            fn help(write: &mut dyn #write_path) { }
-            fn version(write: &mut dyn #write_path) { }
-            unimplemented!()
+    let mut output = TokenStream::new();
+    output.extend(input.into_iter().map(|tree| match tree {
+        TokenTree::Group(group) => TokenTree::Literal(Literal::string(group.to_string().as_str())),
+        TokenTree::Punct(punctuation) => {
+            TokenTree::Literal(Literal::string(punctuation.to_string().as_str()))
         }
-    }).into()
+        TokenTree::Ident(identifier) => {
+            TokenTree::Literal(Literal::string(identifier.to_string().as_str()))
+        }
+        TokenTree::Literal(literal) => {
+            TokenTree::Literal(Literal::string(literal.to_string().trim_matches('"')))
+        }
+    }));
+    output
 }
 
-fn path<'a>(segments: impl IntoIterator<Item = &'a str>) -> Path {
-    let mut separated = Punctuated::new();
-    for segment in segments {
-        separated.push(Ident::new(segment, Span::call_site()).into());
-    }
-    Path {
-        segments: separated,
-        leading_colon: None,
-    }
+macro_rules! case {
+    ($case: ident) => {
+        #[proc_macro]
+        pub fn $case(input: TokenStream) -> TokenStream {
+            use proc_macro::{Group, Ident, Literal, TokenTree};
+
+            let mut output = TokenStream::new();
+            output.extend(input.into_iter().map(|tree| match tree {
+                TokenTree::Group(group) => {
+                    TokenTree::Group(Group::new(group.delimiter(), $case(group.stream())))
+                }
+                TokenTree::Ident(identifier) => {
+                    let name = Case::$case(identifier.to_string().as_str());
+                    TokenTree::Ident(Ident::new(&name, identifier.span()))
+                }
+                TokenTree::Punct(punctuation) => TokenTree::Punct(punctuation),
+                TokenTree::Literal(literal) => {
+                    let value = Case::$case(literal.to_string().trim_matches('"'));
+                    TokenTree::Literal(Literal::string(&value))
+                }
+            }));
+            output
+        }
+    };
 }
+
+case!(pascal);
+case!(camel);
+case!(snake);
+case!(kebab);
+case!(upper);
+case!(lower);
+case!(upper_snake);
+case!(upper_kebab);
