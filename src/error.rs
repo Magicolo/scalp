@@ -1,5 +1,4 @@
-use std::{borrow::Cow, collections::VecDeque, fmt, error};
-
+use std::{borrow::Cow, collections::VecDeque, error, fmt};
 
 #[derive(Debug, Clone)]
 pub enum Error {
@@ -7,6 +6,7 @@ pub enum Error {
     Version(Option<Cow<'static, str>>),
     MissingOptionValue,
     MissingValues,
+    Format(fmt::Error),
     MissingRequiredArgument {
         name: Cow<'static, str>,
         index: usize,
@@ -45,6 +45,11 @@ pub enum Error {
     MissingValue,
     DuplicateNode,
     MissingVerb,
+    InvalidVerbContext,
+    InvalidOptionContext,
+    InvalidGroupContext,
+    InvalidRootContext,
+    GroupNestingLimitOverflow,
 }
 
 pub trait Ok: Sized {

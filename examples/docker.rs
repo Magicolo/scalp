@@ -1,7 +1,9 @@
-use std::{str::FromStr, any::type_name, borrow::Cow};
-use scalp::{Error, Builder, Ok};
+use core::fmt;
+use scalp::{Builder, Error, Ok, Options};
+use std::{any::type_name, borrow::Cow, str::FromStr};
+use termion::style::{Bold, Italic, Reset, Underline};
 
-pub struct Root {
+pub struct Docker {
     pub global: GlobalOptions,
     pub command: Command,
 }
@@ -38,13 +40,19 @@ pub enum Command {
     },
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LogLevel {
     Debug = 1,
     Info = 2,
     Warn = 3,
     Error = 4,
     Fatal = 5,
+}
+
+impl fmt::Display for LogLevel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(self, f)
+    }
 }
 
 impl FromStr for LogLevel {
@@ -66,26 +74,15 @@ impl FromStr for LogLevel {
 }
 
 fn main() -> Result<(), Error> {
-
     let parser = Builder::new()
         .root(|build| build
             .version(env!("CARGO_PKG_VERSION"))
-            .help("Usage: docker [OPTIONS] COMMAND")
-            .help("A self-sufficient runtime for containers.")
+            .help(format!("{Underline}Usage: docker [OPTIONS] COMMAND{Reset}\n\nA self-sufficient runtime for containers."))
+            .group(|build| build.help(format!("{Bold}Common Commands:{Reset}")).ok())?
+            .group(|build| build.help(format!("{Bold}Management Commands:{Reset}")).ok())?
+            .group(|build| build.help(format!("{Bold}Swarm Commands:{Reset}")).ok())?
             .group(|build| build
-                .name("Common Commands:")
-                .ok()
-            )?
-            .group(|build| build
-                .name("Management Commands:")
-                .ok()
-            )?
-            .group(|build| build
-                .name("Swarm Commands:")
-                .ok()
-            )?
-            .group(|build| build
-                .name("Commands:")
+                .help(format!("{Bold}Commands:{Reset}"))
                 .verb(|build| build
                     .name("attach")
                     .help("Attach local standard input, output, and error streams to a running container.")
@@ -96,18 +93,14 @@ fn main() -> Result<(), Error> {
                     .option(|build| build
                         .name("no-stdin")
                         .help("Do not attach STDIN.")
-                        .default(|| false)
+                        .default(false)
                     )
                     .option(|build| build
                         .name("sig-proxy")
                         .help("Proxy all received signals to the process.")
-                        .default(|| true)
+                        .default(true)
                     )
-                    .map(|(detach_keys, no_stdin, sig_proxy)| Command::Attach {
-                        detach_keys,
-                        no_stdin,
-                        sig_proxy
-                    })
+                    .map(|(detach_keys, no_stdin, sig_proxy)| Command::Attach { detach_keys, no_stdin, sig_proxy })
                     .ok()
                 )?
                 .verb(|build| build
@@ -120,15 +113,14 @@ fn main() -> Result<(), Error> {
                     .map(|(signal,)| Command::Kill { signal })
                     .ok()
                 )?
-                .map(|(attach, kill)| attach.or(kill))
-                .ok()
-            )?
+                .any()
+                .ok())?
             .group(|build| build
-                .name("Global Options:")
+                .help(format!("{Bold}Global Options:{Reset}"))
                 .option(|build| build
                     .name("config")
                     .help("Location of client config files.")
-                    .default(|| "/home/goulade/.docker".to_string())
+                    .default("/home/goulade/.docker".to_string())
                 )
                 .option(|build| build
                     .name("context")
@@ -140,55 +132,61 @@ fn main() -> Result<(), Error> {
                     .name("debug")
                     .name("D")
                     .help("Enable debug mode.")
-                    .default(|| false)
+                    .default(false)
                 )
                 .option(|build| build
                     .name("host")
                     .name("H")
                     .help("Daemon socket to connect to.")
-                    .many::<_, Vec<_>>(Some(1))
+                    .many(Some(1))
                 )
                 .option(|build| build
                     .name("log-level")
                     .name("l")
-                    .help("Set the logging level.") // TODO: Should display the available values + default automatically.
-                    .default(|| LogLevel::Info)
+                    .help("Set the logging level.")
+                    .default(LogLevel::Info)
                 )
-                .map(|(config, context, debug, host, log_level)| GlobalOptions{
+                .options([Options::Version, Options::Help])
+                .map(|(config, context, debug, host, log_level)| GlobalOptions {
                     config,
                     context,
                     debug,
-                    host, 
+                    host,
                     log_level
                 })
                 .ok()
             )?
-            .help("Run 'docker COMMAND --help' for more information on a command.")
-            .help("For more help on how to use Docker, head to https://docs.docker.com/go/guides/")
-            .try_map(|(_common, _management, _swarm, commands, global)| 
-                Root {
+            .help(format!("Run 'docker COMMAND --help' for more information on a command.\n\n{Italic}For more help on how to use Docker, head to https://docs.docker.com/go/guides/{Reset}\n"))
+            .try_map(|(_common, _management, _swarm, commands, global)|
+                Docker {
                     command: commands.ok_or(Error::MissingVerb)?,
                     global
                 }
-                .ok::<Error>()
+                .ok()
             )
             .ok()
         )?
         .build();
-    let arguments = ["--config", "boba", "--debug", "false", "-H", "jango", "--host", "karl"];
+    let arguments = [
+        "--config", "boba", "--debug", "false", "-H", "jango", "kill", "--signal", "asparre", "--",
+        "--host", "karl", "--help",
+    ];
     let environment = [("DOCKER_HOST", "fett")];
     match parser.parse_with(arguments, environment) {
         Ok(Some(docker)) => {
             assert_eq!(docker.global.config, "boba".to_string());
             assert_eq!(docker.global.context, Some("fett".to_string()));
             assert!(!docker.global.debug);
-            assert_eq!(docker.global.host, vec!["jango".to_string(), "karl".to_string()]);
+            assert_eq!(
+                docker.global.host,
+                vec!["jango".to_string(), "karl".to_string()]
+            );
             assert_eq!(docker.global.log_level, LogLevel::Info);
-            Ok(())
         }
         Ok(None) => todo!(),
-        Err(Error::Help(Some(help))) => panic!("{help}"),
-        Err(Error::Version(Some(version))) => panic!("{version}"),
-        Err(error) => Err(error),
+        Err(Error::Help(Some(help))) => println!("{help}"),
+        Err(Error::Version(Some(version))) => println!("{version}"),
+        Err(error) => return Err(error),
     }
+    Ok(())
 }

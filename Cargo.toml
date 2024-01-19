@@ -11,6 +11,7 @@ license = "MIT"
 [dependencies]
 anyhow = "*"
 orn = "*"
+termion = "*"
 scalp_core = { path = "./scalp_core" }
 scalp_macro = { path = "./scalp_macro" }
 
