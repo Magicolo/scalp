@@ -12,7 +12,8 @@ pub enum Error {
         index: usize,
     },
     UnrecognizedArgument {
-        name: Cow<'static, str>,
+        argument: Cow<'static, str>,
+        suggestions: Vec<(Cow<'static, str>, usize)>
     },
     UnrecognizedOption {
         name: Cow<'static, str>,

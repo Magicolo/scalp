@@ -1,19 +1,16 @@
 use crate::{
+    case::Case,
     error::Error,
-    parse::{Any, At, Default, Environment, Many, Map, Node, Parse, Parser, Require, Value},
+    parse::{
+        Any, At, Default, Environment, Indices, Many, Map, Node, Parse, Parser, Require, Value,
+    },
     scope::{self, Scope},
     stack::{Count, Push},
     Meta, Options, BREAK, HELP, MAXIMUM, SHIFT,
 };
-use scalp_core::case::Case;
 use std::{
-    any::type_name,
-    borrow::Cow,
-    collections::{hash_map::Entry, HashMap},
-    default,
-    fmt::Display,
-    marker::PhantomData,
-    str::FromStr,
+    any::type_name, borrow::Cow, collections::hash_map::Entry, default, fmt::Display,
+    marker::PhantomData, str::FromStr,
 };
 
 pub struct Builder<S, P> {
@@ -67,7 +64,7 @@ impl Builder<(), ()> {
     ) -> Result<Builder<(), Node<Q>>, Error> {
         let (mut root, mut builder) =
             build(self.map_both(|_| scope::Root::new(), |_| At(())))?.swap_scope(());
-        let mut indices = HashMap::new();
+        let mut indices = Indices::default();
         builder.descend(&mut root, 0, 0, &mut indices, true)?;
         Ok(builder.map_parse(|parse| Node {
             parse,
@@ -83,7 +80,7 @@ impl<S, P> Builder<S, P> {
         metas: &mut Vec<Meta>,
         mask: usize,
         shift: u32,
-        indices: &mut HashMap<Cow<'static, str>, usize>,
+        indices: &mut Indices,
         top: bool,
     ) -> Result<(bool, bool), Error> {
         let mut index = 0;
@@ -137,7 +134,7 @@ impl<S, P> Builder<S, P> {
     fn descend_verb(
         &mut self,
         metas: &mut Vec<Meta>,
-        indices: &mut HashMap<Cow<'static, str>, usize>,
+        indices: &mut Indices,
         index: usize,
     ) -> Result<(), Error> {
         for i in 0..metas.len() {
@@ -153,12 +150,13 @@ impl<S, P> Builder<S, P> {
     fn descend_option(
         &mut self,
         metas: &mut Vec<Meta>,
-        indices: &mut HashMap<Cow<'static, str>, usize>,
+        indices: &mut Indices,
         index: usize,
     ) -> Result<(), Error> {
         for i in 0..metas.len() {
             match metas.get(i) {
                 Some(Meta::Name(name)) => Self::insert_key(name.clone(), indices, index)?,
+                Some(Meta::Position) => indices.1.push(index),
                 None => break,
                 _ => {}
             };
@@ -169,7 +167,7 @@ impl<S, P> Builder<S, P> {
     fn insert_version(
         &mut self,
         metas: &mut Vec<Meta>,
-        indices: &mut HashMap<Cow<'static, str>, usize>,
+        indices: &mut Indices,
     ) -> Result<(), Error> {
         let names = (self.option_name("version"), self.option_name("v"));
         Self::insert_key(names.0.clone(), indices, HELP)?;
@@ -182,11 +180,7 @@ impl<S, P> Builder<S, P> {
         Ok(())
     }
 
-    fn insert_help(
-        &mut self,
-        metas: &mut Vec<Meta>,
-        indices: &mut HashMap<Cow<'static, str>, usize>,
-    ) -> Result<(), Error> {
+    fn insert_help(&mut self, metas: &mut Vec<Meta>, indices: &mut Indices) -> Result<(), Error> {
         let names = (self.option_name("help"), self.option_name("h"));
         Self::insert_key(names.0.clone(), indices, HELP)?;
         Self::insert_key(names.1.clone(), indices, HELP)?;
@@ -200,10 +194,10 @@ impl<S, P> Builder<S, P> {
 
     fn insert_key(
         key: Cow<'static, str>,
-        indices: &mut HashMap<Cow<'static, str>, usize>,
+        indices: &mut Indices,
         index: usize,
     ) -> Result<(), Error> {
-        match indices.entry(key) {
+        match indices.0.entry(key) {
             Entry::Occupied(entry) => Err(Error::DuplicateName {
                 name: entry.key().clone(),
             }),
@@ -405,7 +399,7 @@ impl<S: scope::Node, P> Builder<S, P> {
     {
         let (scope, old, builder) = self.swap_both(scope::Verb::new(), At(()));
         let (mut verb, mut builder) = build(builder)?.swap_scope(scope);
-        let mut indices = HashMap::new();
+        let mut indices = Indices::default();
         builder.descend(&mut verb, 0, 0, &mut indices, true)?;
         let meta = Meta::from(verb);
         builder.scope.push(meta.clone(1));
@@ -460,6 +454,10 @@ impl<P> Builder<scope::Option, P> {
         self.meta(Meta::Name(name))
     }
 
+    pub fn position(self) -> Self {
+        self.meta(Meta::Position)
+    }
+
     pub fn default<T: Clone + Display>(self, default: T) -> Builder<scope::Option, Default<P, T>>
     where
         P: Parse<Value = Option<T>>,
@@ -491,7 +489,7 @@ impl<P> Builder<scope::Option, P> {
     where
         P: Parse<Value = Option<T>>,
     {
-        self.meta(Meta::Many)
+        self.meta(Meta::Many(per))
             .map_parse(|parse| Many(parse, per, PhantomData))
     }
 }

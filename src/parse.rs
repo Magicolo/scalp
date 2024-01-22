@@ -1,6 +1,7 @@
 use crate::{
     error::Error,
     help::{help, version},
+    spell::Spell,
     stack::{Count, Pop, Push},
     Meta, BREAK, HELP, MASK, SHIFT, VERSION,
 };
@@ -12,7 +13,7 @@ use std::{
     marker::PhantomData,
     rc::Rc,
     str::FromStr,
-    sync::Arc,
+    sync::Arc, cmp::min,
 };
 
 pub struct State<'a> {
@@ -29,8 +30,11 @@ pub struct Parser<P> {
     pub(crate) parse: P,
 }
 
+#[derive(Default)]
+pub(crate) struct Indices(pub HashMap<Cow<'static, str>, usize>, pub Vec<usize>);
+
 pub struct Node<P> {
-    pub(crate) indices: HashMap<Cow<'static, str>, usize>,
+    pub(crate) indices: Indices,
     pub(crate) meta: Meta,
     pub(crate) parse: P,
 }
@@ -111,6 +115,10 @@ impl<'a> State<'a> {
             }
             None => Err(Error::MissingOptionValue),
         }
+    }
+
+    pub fn restore(&mut self, key: Cow<'static, str>) {
+        self.arguments.push_front(key)
     }
 
     pub const fn index(&self) -> usize {
@@ -267,13 +275,31 @@ impl<P: Parse> Parse for Node<P> {
         }
         let mut run = || {
             let mut state = self.parse.initialize(states.1)?;
+            let mut at = 0;
             while let Some(key) = states.1.key() {
-                match self.indices.get(&key).copied() {
+                match self.indices.0.get(&key).copied() {
                     Some(HELP) => return Err(Error::Help(None)),
                     Some(VERSION) => return Err(Error::Version(None)),
                     Some(BREAK) => break,
                     Some(index) => state = self.parse.parse((state, &mut states.1.with(index)))?,
-                    None => return Err(Error::UnrecognizedArgument { name: key }),
+                    None => match self.indices.1.get(at).copied() {
+                        Some(index) => {
+                            states.1.restore(key);
+                            state = self.parse.parse((state, &mut states.1.with(index)))?;
+                            at += 1;
+                        }
+                        None => {
+                            let suggestions = Spell::new().suggest(
+                                &key,
+                                self.indices.0.keys().cloned(),
+                                min(key.len() / 3, 3),
+                            );
+                            return Err(Error::UnrecognizedArgument {
+                                argument: key,
+                                suggestions,
+                            });
+                        }
+                    },
                 };
             }
             self.parse.finalize((state, states.1))
@@ -445,7 +471,7 @@ macro_rules! at {
                 let index = _states.1.index();
                 match index & MASK {
                     $($index => _states.0.$index = self.0.$index.parse((_states.0.$index, &mut _states.1.with(index >> SHIFT)))?,)*
-                    _ => {},
+                    index => return Err(Error::InvalidIndex { index }),
                 };
                 #[allow(unreachable_code)]
                 Ok(_states.0)

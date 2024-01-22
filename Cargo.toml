@@ -9,11 +9,7 @@ documentation = "https://docs.rs/scalp/latest/scalp/"
 license = "MIT"
 
 [dependencies]
-anyhow = "*"
-orn = "*"
 termion = "*"
-scalp_core = { path = "./scalp_core" }
-scalp_macro = { path = "./scalp_macro" }
 
 [workspace]
 members = [ "scalp_core", "scalp_macro", "scalp_core" ]

@@ -1,9 +1,11 @@
-pub mod build;
-pub mod error;
-pub mod help;
-pub mod parse;
-pub mod scope;
-pub mod stack;
+mod build;
+mod error;
+mod help;
+mod parse;
+mod scope;
+mod stack;
+mod spell;
+mod case;
 
 pub use crate::{
     build::Builder,
@@ -15,12 +17,10 @@ use std::borrow::Cow;
 
 /*
     TODO:
+    - Support for indexed arguments.
     - If verb doesn't have sub options, allow options to be placed before or after the verb.
     - Ensure that variables don't obscure the context variable.
     - Support for streamed arguments via stdin, file system, http.
-    - Support for help with #[help(text)].
-        - Maybe the #[help] attribute generates a doc string?
-        - Allow on fields and structs.
     - Support for a value with --help
         - Allows to provide a help context when help becomes very large (ex: --help branch)
     - Support aliases with #[alias(names...)].
@@ -53,11 +53,12 @@ use std::borrow::Cow;
 #[derive(Debug)]
 pub enum Meta {
     Name(Cow<'static, str>),
+    Position,
     Version(Cow<'static, str>),
     Help(Cow<'static, str>),
     Type(Cow<'static, str>),
     Required,
-    Many,
+    Many(Option<usize>),
     Default(Cow<'static, str>),
     Environment(Cow<'static, str>),
     Hide, // TODO: Add Show?
@@ -78,11 +79,12 @@ impl Meta {
     pub fn clone(&self, depth: usize) -> Self {
         match self {
             Meta::Name(value) => Meta::Name(value.clone()),
+            Meta::Position => Meta::Position,
             Meta::Version(value) => Meta::Version(value.clone()),
             Meta::Help(value) => Meta::Help(value.clone()),
             Meta::Type(value) => Meta::Type(value.clone()),
             Meta::Required => Meta::Required,
-            Meta::Many => Meta::Many,
+            Meta::Many(value) => Meta::Many(*value),
             Meta::Default(value) => Meta::Default(value.clone()),
             Meta::Environment(value) => Meta::Environment(value.clone()),
             Meta::Hide => Meta::Hide,

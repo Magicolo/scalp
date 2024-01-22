@@ -1,4 +1,8 @@
-use std::{fmt::{self, Write}, slice::from_ref, borrow::Cow};
+use std::{
+    borrow::Cow,
+    fmt::{self, Write},
+    slice::from_ref,
+};
 
 use crate::Meta;
 
@@ -35,6 +39,7 @@ impl<W: Write> Items<'_, '_, W> {
 }
 
 impl<'a, W: Write + 'a> Helper<'a, W> {
+    const INDENT: isize = 2;
     fn items<'b>(&'b mut self, prefix: &'b str, separator: &'b str) -> Items<'a, 'b, W> {
         Items {
             helper: self,
@@ -45,42 +50,62 @@ impl<'a, W: Write + 'a> Helper<'a, W> {
     }
 
     fn indent(&mut self) -> Helper<W> {
+        self.indent_with(Self::INDENT)
+    }
+
+    fn indent_with(&mut self, by: isize) -> Helper<W> {
         Helper {
             write: self.write,
-            indent: self.indent + 1,
+            indent: self.indent + by,
         }
     }
 
     fn indentation(&mut self) -> Result<(), fmt::Error> {
         for _ in 0..self.indent {
-            self.write("  ")?;
+            self.write(" ")?;
         }
         Ok(())
     }
 
-    fn names(&mut self, metas: &[Meta]) -> Result<bool, fmt::Error> {
+    fn names(&mut self, metas: &[Meta], position: usize) -> Result<(bool, bool), fmt::Error> {
+        let mut has = false;
         let mut items = self.items("", ", ");
         for meta in metas {
             match meta {
                 Meta::Name(value) => items.item(|help| help.write(value))?,
+                Meta::Position => {
+                    items.item(|help| help.write(&format!("[{position}]")))?;
+                    has = true;
+                }
                 Meta::Hide => break,
                 _ => {}
             }
         }
-        Ok(items.count() > 0)
+        Ok((items.count() > 0, has))
     }
 
     fn type_name(&mut self, prefix: &str, metas: &[Meta]) -> Result<bool, fmt::Error> {
         let mut found = None;
+        let mut many = None;
         for meta in metas.iter() {
-            if let Meta::Type(value) = meta {
-                found = Some(value)
+            match meta {
+                Meta::Type(value) => {
+                    found = Some(value);
+                    many = None;
+                }
+                Meta::Many(per) => many = Some(per.as_ref()),
+                _ => {}
             }
         }
         match found {
             Some(value) => {
                 self.write(prefix)?;
                 self.write(value)?;
+                match many {
+                    Some(Some(per)) => self.write(&format!("[{per}]"))?,
+                    Some(None) => self.write("[]")?,
+                    _ => {}
+                }
                 Ok(true)
             }
             None => Ok(false),
@@ -124,6 +149,7 @@ impl<'a, W: Write + 'a> Helper<'a, W> {
     }
 
     fn node(&mut self, metas: &[Meta]) -> Result<(), fmt::Error> {
+        let mut option = 0;
         for meta in metas {
             match meta {
                 Meta::Name(value) | Meta::Help(value) => {
@@ -140,7 +166,11 @@ impl<'a, W: Write + 'a> Helper<'a, W> {
                     self.indent().node(metas)?;
                 }
                 Meta::Verb(metas) => self.indent().verb(metas)?,
-                Meta::Option(metas) => self.indent().option(metas)?,
+                Meta::Option(metas) => {
+                    if self.indent().option(metas, option)? {
+                        option += 1;
+                    }
+                }
                 _ => {}
             }
         }
@@ -157,9 +187,9 @@ impl<'a, W: Write + 'a> Helper<'a, W> {
         Ok(())
     }
 
-    fn option(&mut self, metas: &[Meta]) -> Result<(), fmt::Error> {
+    fn option(&mut self, metas: &[Meta], position: usize) -> Result<bool, fmt::Error> {
         self.indentation()?;
-        self.names(metas)?;
+        let (_, has) = self.names(metas, position)?;
         self.type_name(": ", metas)?;
 
         let mut helper = self.indent();
@@ -182,22 +212,23 @@ impl<'a, W: Write + 'a> Helper<'a, W> {
         }
 
         helper.line("")?;
-        Ok(())
+        Ok(has)
     }
 
     fn verb(&mut self, metas: &[Meta]) -> Result<(), fmt::Error> {
         self.indentation()?;
-        self.names(metas)?;
-        let mut helper = self.indent();
-        helper.line("")?;
-        helper.indentation()?;
+        self.names(metas, 0)?;
+        // let mut helper = self.indent();
+        // helper.line("")?;
+        // helper.indentation()?;
 
-        if helper.help(metas)? {
-            helper.line("")?;
-            helper.indentation()?;
-        }
+        // if helper.help(metas)? {
+        //     helper.line("")?;
+        //     helper.indentation()?;
+        // }
 
-        helper.line("")?;
+        self.indent().node(metas)?;
+        self.line("")?;
         Ok(())
     }
 }

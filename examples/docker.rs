@@ -38,6 +38,10 @@ pub enum Command {
     Kill {
         signal: Option<String>,
     },
+    Boba {
+        boba: Vec<String>,
+        fett: usize,
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -113,6 +117,21 @@ fn main() -> Result<(), Error> {
                     .map(|(signal,)| Command::Kill { signal })
                     .ok()
                 )?
+                .verb(|build| build
+                    .name("boba")
+                    .options([Options::Help, Options::Version])
+                    .option(|build| build
+                        .position()
+                        .help("Poulah")
+                        .many(None)
+                    )
+                    .option(|build| build
+                        .name("fett")
+                        .default(100)    
+                    )
+                    .map(|(boba, fett)| Command::Boba { boba, fett })
+                    .ok()
+                )?
                 .any()
                 .ok())?
             .group(|build| build
@@ -168,8 +187,7 @@ fn main() -> Result<(), Error> {
         )?
         .build();
     let arguments = [
-        "--config", "boba", "--debug", "false", "-H", "jango", "kill", "--signal", "asparre", "--",
-        "--host", "karl", "--help",
+        "--config", "boba", "--debug", "false", "-H", "jango", "--host", "karl", "--help", "boba", "--fett", "1265", "sweet", "bowl"
     ];
     let environment = [("DOCKER_HOST", "fett")];
     match parser.parse_with(arguments, environment) {
