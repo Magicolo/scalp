@@ -1,45 +1,33 @@
 mod build;
+mod case;
 mod error;
 mod help;
 mod parse;
 mod scope;
-mod stack;
 mod spell;
-mod case;
+mod stack;
 
-pub use crate::{
-    build::Builder,
-    error::{Error, Ok},
-    parse::Parser,
-    scope::Scope,
-};
+pub use crate::{build::Builder, error::Error, parse::Parser, scope::Scope};
 use std::borrow::Cow;
 
 /*
     TODO:
+    - Support for styled formatting out of the box; use a feature?
+    - Parse with graceful handling of 'Error::Help' and 'Error::Version'.
     - Support for indexed arguments.
-    - If verb doesn't have sub options, allow options to be placed before or after the verb.
     - Ensure that variables don't obscure the context variable.
     - Support for streamed arguments via stdin, file system, http.
     - Support for a value with --help
         - Allows to provide a help context when help becomes very large (ex: --help branch)
-    - Support aliases with #[alias(names...)].
-        - Maybe the #[alias] attribute generates a doc string?
-    - Support default values with #[default(value?)].
-        - Maybe the #[default] attribute generates a doc string?
-        - #[default] uses 'Default::default'.
-        - #[default(value)] uses 'TryFrom::try_from(value)'.
-    - Support environment variables with #[environment(variables...)].
-        - Maybe the #[environment] attribute generates a doc string?
-    - Support for #[omit(help)]
-    - Support for #[version] (uses the cargo version) or #[version(version)] (explicit version).
-        - Only add the version option if the version attribute is supplied.
     - Autocomplete?
+    - Simplify the 'Into<Cow<'static, str>>' all over the place, if possible.
+        - There are probably some places where the `Cow` isn't useful.
     - Add support for combined flags using the short names when possible.
         - Short names must be of length 1.
         - ex: ls -l -a -r -t => ls -lart
     - Can I unify 'Builder' and 'Parser'?
     - Support for json values.
+    - Find a way to get rid of the '.ok()'. It is very confusing.
     - What if an option has an child that is an option/verb/Group?
     - Different kinds of 'help' such as 'usage', 'summary', 'detail'; that will be displayed in different contexts.
         - The motivation comes from differentiating the 'summary' help and the 'detail' help.
@@ -61,6 +49,7 @@ pub enum Meta {
     Many(Option<usize>),
     Default(Cow<'static, str>),
     Environment(Cow<'static, str>),
+    Show, // TODO: Add Show?
     Hide, // TODO: Add Show?
     Root(Vec<Meta>),
     Option(Vec<Meta>),
@@ -88,6 +77,7 @@ impl Meta {
             Meta::Default(value) => Meta::Default(value.clone()),
             Meta::Environment(value) => Meta::Environment(value.clone()),
             Meta::Hide => Meta::Hide,
+            Meta::Show => Meta::Show,
             Meta::Root(metas) if depth > 0 => {
                 Meta::Root(metas.iter().map(|meta| meta.clone(depth - 1)).collect())
             }

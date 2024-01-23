@@ -1,71 +1,81 @@
 use std::{borrow::Cow, collections::VecDeque, error, fmt};
 
-#[derive(Debug, Clone)]
 pub enum Error {
     Help(Option<Cow<'static, str>>),
     Version(Option<Cow<'static, str>>),
     MissingOptionValue,
-    MissingValues,
-    Format(fmt::Error),
-    MissingRequiredArgument {
-        name: Cow<'static, str>,
-        index: usize,
-    },
     UnrecognizedArgument {
         argument: Cow<'static, str>,
-        suggestions: Vec<(Cow<'static, str>, usize)>
+        suggestions: Vec<(Cow<'static, str>, usize)>,
     },
-    UnrecognizedOption {
-        name: Cow<'static, str>,
-    },
-    ExcessArguments(VecDeque<Cow<'static, str>>),
-    MissingArgument,
-    InvalidIndex {
-        index: usize,
+    ExcessArguments {
+        arguments: VecDeque<Cow<'static, str>>,
     },
     DuplicateName {
         name: Cow<'static, str>,
     },
-    MissingOptionName,
     DuplicateOptionValue,
-    DuplicateArgument {
-        name: Cow<'static, str>,
+    Anyhow(anyhow::Error),
+    MissingRequiredValue,
+    FailedToParseEnvironmentVariable {
+        key: Cow<'static, str>,
+        value: Cow<'static, str>,
+    },
+    DuplicateNode,
+    GroupNestingLimitOverflow,
+    InvalidIndex {
         index: usize,
     },
-    FailedToParse {
-        value: Cow<'static, str>,
-        type_name: Cow<'static, str>,
-    },
-    FailedToConvert {
-        source_type: Cow<'static, str>,
-        target_type: Cow<'static, str>,
-    },
-    MissingRequiredValue,
-    DuplicateFailure,
-    FailedToParseVariable(Cow<'static, str>),
-    MissingValue,
-    DuplicateNode,
-    MissingVerb,
-    InvalidVerbContext,
-    InvalidOptionContext,
-    InvalidGroupContext,
-    InvalidRootContext,
-    GroupNestingLimitOverflow,
 }
 
-pub trait Ok: Sized {
-    fn ok<E>(self) -> Result<Self, E>;
-}
-
-impl<T> Ok for T {
-    fn ok<E>(self) -> Result<Self, E> {
-        Ok(self)
+impl fmt::Debug for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(self, f)
     }
 }
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Debug::fmt(self, f)
+        match self {
+            Error::Help(Some(help)) => write!(f, "{help}")?,
+            Error::Help(None) => write!(f, "Missing help.")?,
+            Error::Version(Some(version)) => write!(f, "{version}")?,
+            Error::Version(None) => write!(f, "Missing version.")?,
+            Error::UnrecognizedArgument {
+                argument,
+                suggestions,
+            } => {
+                write!(f, "Unrecognized argument '{argument}'.")?;
+                let mut join = false;
+                for (suggestion, _) in suggestions {
+                    if join {
+                        write!(f, ", ")?;
+                    } else {
+                        write!(f, " Similar matches: ")?;
+                        join = true;
+                    }
+                    write!(f, "'{suggestion}'")?;
+                }
+            }
+
+            Error::MissingOptionValue => todo!(),
+            Error::ExcessArguments { arguments } => todo!(),
+            Error::DuplicateName { name } => todo!(),
+            Error::DuplicateOptionValue => todo!(),
+            Error::MissingRequiredValue => todo!(),
+            Error::DuplicateNode => todo!(),
+            Error::GroupNestingLimitOverflow => todo!(),
+            Error::InvalidIndex { index } => todo!(),
+            Error::FailedToParseEnvironmentVariable { key, value } => todo!(),
+            Error::Anyhow(error) => error.fmt(f)?,
+        }
+        Ok(())
+    }
+}
+
+impl From<anyhow::Error> for Error {
+    fn from(error: anyhow::Error) -> Self {
+        Error::Anyhow(error)
     }
 }
 

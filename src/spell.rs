@@ -17,7 +17,7 @@ impl Spell {
         let mut results = Vec::with_capacity(dictionary.size_hint().0);
         for candidate in dictionary {
             let distance = self.distance(word.as_bytes(), candidate.as_bytes());
-            if distance < maximum {
+            if distance <= maximum {
                 results.push((candidate, distance));
             }
         }
@@ -59,17 +59,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn distances() {
-        assert_eq!(Spell::new().distance(b"boba", b"boba"), 0);
-        assert_eq!(Spell::new().distance(b"boba", b"bobo"), 1);
-        assert_eq!(Spell::new().distance(b"boba", b"bobba"), 1);
-        assert_eq!(Spell::new().distance(b"boba", b"boa"), 1);
-        assert_eq!(Spell::new().distance(b"boba", b"fett"), 4);
+    fn distance() {
+        let mut spell = Spell::new();
+        assert_eq!(spell.distance(b"boba", b"boba"), 0);
+        assert_eq!(spell.distance(b"boba", b"bobo"), 1);
+        assert_eq!(spell.distance(b"boba", b"bobba"), 1);
+        assert_eq!(spell.distance(b"boba", b"boa"), 1);
+        assert_eq!(spell.distance(b"boba", b"fett"), 4);
     }
 
     #[test]
-    fn best() {
-        let best = Spell::new().suggest(
+    fn suggest() {
+        let results = Spell::new().suggest(
             "poulaye",
             [
                 "poullayye",
@@ -81,11 +82,20 @@ mod tests {
                 "vladimarre",
                 "poulaye",
                 "p",
-                "poullayye",
                 "poulay",
             ],
-            5,
+            2,
         );
-        println!("{best:?}");
+        assert_eq!(
+            results,
+            vec![
+                ("poulaye", 0),
+                ("piulaye", 1),
+                ("poulay", 1),
+                ("poullayye", 2),
+                ("pilaye", 2),
+                ("poulah", 2)
+            ]
+        );
     }
 }
