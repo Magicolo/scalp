@@ -16,6 +16,9 @@ pub enum Error {
     },
     DuplicateOptionValue,
     Anyhow(anyhow::Error),
+    Format(fmt::Error),
+    Other(Box<dyn error::Error + Send + Sync>),
+
     MissingRequiredValue,
     FailedToParseEnvironmentVariable {
         key: Cow<'static, str>,
@@ -25,6 +28,9 @@ pub enum Error {
     GroupNestingLimitOverflow,
     InvalidIndex {
         index: usize,
+    },
+    InvalidName {
+        name: Cow<'static, str>,
     },
 }
 
@@ -57,9 +63,24 @@ impl fmt::Display for Error {
                     write!(f, "'{suggestion}'")?;
                 }
             }
+            Error::ExcessArguments { arguments } => {
+                write!(f, "Excess arguments '")?;
+                let mut join = false;
+                for argument in arguments {
+                    if join {
+                        write!(f, ", ")?;
+                    } else {
+                        join = true;
+                    }
+                    write!(f, "{argument}")?;
+                }
+                write!(f, "'.")?;
+            }
+            Error::Anyhow(error) => error.fmt(f)?,
+            Error::Format(error) => error.fmt(f)?,
+            Error::Other(error) => error.fmt(f)?,
 
             Error::MissingOptionValue => todo!(),
-            Error::ExcessArguments { arguments } => todo!(),
             Error::DuplicateName { name } => todo!(),
             Error::DuplicateOptionValue => todo!(),
             Error::MissingRequiredValue => todo!(),
@@ -67,7 +88,7 @@ impl fmt::Display for Error {
             Error::GroupNestingLimitOverflow => todo!(),
             Error::InvalidIndex { index } => todo!(),
             Error::FailedToParseEnvironmentVariable { key, value } => todo!(),
-            Error::Anyhow(error) => error.fmt(f)?,
+            Error::InvalidName { name } => todo!(),
         }
         Ok(())
     }
@@ -76,6 +97,18 @@ impl fmt::Display for Error {
 impl From<anyhow::Error> for Error {
     fn from(error: anyhow::Error) -> Self {
         Error::Anyhow(error)
+    }
+}
+
+impl From<fmt::Error> for Error {
+    fn from(error: fmt::Error) -> Self {
+        Error::Format(error)
+    }
+}
+
+impl<E: error::Error + Send + Sync + 'static> From<Box<E>> for Error {
+    fn from(error: Box<E>) -> Self {
+        Error::Other(error)
     }
 }
 

@@ -3,15 +3,23 @@ mod case;
 mod error;
 mod help;
 mod parse;
-mod scope;
+pub mod scope;
 mod spell;
 mod stack;
 
-pub use crate::{build::Builder, error::Error, parse::Parser, scope::Scope};
-use std::borrow::Cow;
+pub use crate::{
+    build::Builder,
+    error::Error,
+    parse::{Parse, Parser},
+    scope::Scope,
+};
+use std::{any::TypeId, borrow::Cow};
 
 /*
     TODO:
+    - Could I use the same 'Parse' trait to generate an API?
+    - Generate usage string automatically.
+        - Usage: {verb (for root use the root name)} [position options (if any)] [named options (if any)] {sub-command (if any)}
     - Support for styled formatting out of the box; use a feature?
     - Parse with graceful handling of 'Error::Help' and 'Error::Version'.
     - Support for indexed arguments.
@@ -26,6 +34,7 @@ use std::borrow::Cow;
         - Short names must be of length 1.
         - ex: ls -l -a -r -t => ls -lart
     - Can I unify 'Builder' and 'Parser'?
+    - Allow to rename '--help' and '--version'?
     - Support for json values.
     - Find a way to get rid of the '.ok()'. It is very confusing.
     - What if an option has an child that is an option/verb/Group?
@@ -44,7 +53,9 @@ pub enum Meta {
     Position,
     Version(Cow<'static, str>),
     Help(Cow<'static, str>),
-    Type(Cow<'static, str>),
+    Usage(Cow<'static, str>),
+    Note(Cow<'static, str>),
+    Type(Cow<'static, str>, TypeId),
     Required,
     Many(Option<usize>),
     Default(Cow<'static, str>),
@@ -60,8 +71,18 @@ pub enum Meta {
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum Options {
-    Version,
-    Help,
+    Version { short: bool, long: bool },
+    Help { short: bool, long: bool },
+}
+
+impl Options {
+    pub const fn version(short: bool, long: bool) -> Self {
+        Self::Version { short, long }
+    }
+
+    pub const fn help(short: bool, long: bool) -> Self {
+        Self::Help { short, long }
+    }
 }
 
 impl Meta {
@@ -71,7 +92,9 @@ impl Meta {
             Meta::Position => Meta::Position,
             Meta::Version(value) => Meta::Version(value.clone()),
             Meta::Help(value) => Meta::Help(value.clone()),
-            Meta::Type(value) => Meta::Type(value.clone()),
+            Meta::Usage(value) => Meta::Usage(value.clone()),
+            Meta::Note(value) => Meta::Note(value.clone()),
+            Meta::Type(value, identifier) => Meta::Type(value.clone(), *identifier),
             Meta::Required => Meta::Required,
             Meta::Many(value) => Meta::Many(*value),
             Meta::Default(value) => Meta::Default(value.clone()),

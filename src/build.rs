@@ -8,12 +8,17 @@ use crate::{
     stack::{Count, Push},
     Meta, Options, BREAK, HELP, MAXIMUM, SHIFT, VERSION,
 };
+use core::fmt;
 use std::{
-    any::type_name, borrow::Cow, collections::hash_map::Entry, default, fmt::Display,
-    marker::PhantomData, str::FromStr,
+    any::{type_name, TypeId},
+    borrow::Cow,
+    collections::hash_map::Entry,
+    default,
+    marker::PhantomData,
+    str::FromStr,
 };
 
-pub struct Builder<S, P> {
+pub struct Builder<S, P = At<()>> {
     case: Case,
     short: Cow<'static, str>,
     long: Cow<'static, str>,
@@ -22,55 +27,9 @@ pub struct Builder<S, P> {
     scope: S,
 }
 
-impl default::Default for Builder<(), ()> {
+impl default::Default for Builder<scope::Root> {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-impl Builder<(), ()> {
-    pub const fn new() -> Self {
-        Self {
-            case: Case::Kebab,
-            short: Cow::Borrowed("-"),
-            long: Cow::Borrowed("--"),
-            buffer: String::new(),
-            scope: (),
-            parse: Ok(()),
-        }
-    }
-
-    pub fn case(mut self, case: Case) -> Self {
-        self.case = case;
-        self
-    }
-
-    pub fn short(mut self, prefix: impl Into<Cow<'static, str>>) -> Self {
-        self.short = prefix.into();
-        self
-    }
-
-    pub fn long(mut self, prefix: impl Into<Cow<'static, str>>) -> Self {
-        self.long = prefix.into();
-        self
-    }
-
-    pub fn root<Q, B: FnOnce(Builder<scope::Root, At>) -> Builder<scope::Root, Q>>(
-        self,
-        build: B,
-    ) -> Builder<(), Node<Q>> {
-        let (root, mut builder) =
-            build(self.map_both(|_| scope::Root::new(), |_| At(()))).swap_scope(());
-        let mut indices = Indices::default();
-        let mut meta = Meta::from(root);
-        let result = builder.descend(&mut meta, &mut indices);
-        builder.try_map_parse(|parse| {
-            result.map(|_| Node {
-                parse,
-                indices,
-                meta,
-            })
-        })
     }
 }
 
@@ -83,12 +42,11 @@ impl<S, P> Builder<S, P> {
             }
             _ => return Ok(()),
         };
-
         if version {
-            self.insert_version(metas, indices)?;
+            self.insert_version(metas, indices, true, true)?;
         }
         if help {
-            self.insert_help(metas, indices)?;
+            self.insert_help(metas, indices, true, true)?;
         }
         Self::insert_key(self.long.clone(), indices, BREAK)?;
         Ok(())
@@ -119,18 +77,20 @@ impl<S, P> Builder<S, P> {
                     return Err(Error::GroupNestingLimitOverflow)
                 }
                 Some(Meta::Group(metas)) => {
-                    let tuple = self.descend_node(metas, value, shift + SHIFT, indices)?;
-                    version &= tuple.0;
-                    help &= tuple.1;
+                    let pair = self.descend_node(metas, value, shift + SHIFT, indices)?;
+                    version &= pair.0;
+                    help &= pair.1;
                     index += 1;
                 }
-                Some(Meta::Options(Options::Help)) => {
-                    self.insert_help(metas, indices)?;
-                    help = false;
-                }
-                Some(Meta::Options(Options::Version)) => {
-                    self.insert_version(metas, indices)?;
+                Some(Meta::Options(Options::Version { short, long })) => {
+                    let (short, long) = (*short, *long);
+                    self.insert_version(metas, indices, short, long)?;
                     version = false;
+                }
+                Some(Meta::Options(Options::Help { short, long })) => {
+                    let (short, long) = (*short, *long);
+                    self.insert_help(metas, indices, short, long)?;
+                    help = false;
                 }
                 None => break,
                 _ => {}
@@ -176,31 +136,51 @@ impl<S, P> Builder<S, P> {
         &mut self,
         metas: &mut Vec<Meta>,
         indices: &mut Indices,
+        short: bool,
+        long: bool,
     ) -> Result<(), Error> {
-        let (Some(v), Some(version)) = (self.option_name("v"), self.option_name("version")) else {
-            return Ok(());
-        };
-        Self::insert_key(v.clone(), indices, VERSION)?;
-        Self::insert_key(version.clone(), indices, VERSION)?;
-        metas.push(Meta::Option(vec![
-            Meta::Version(Cow::Borrowed("Displays version information.")),
-            Meta::Name(v),
-            Meta::Name(version),
-        ]));
+        let mut option = vec![Meta::Help(Cow::Borrowed("Displays version information."))];
+        if short {
+            let name = self.option_name("v")?;
+            if Self::insert_key(name.clone(), indices, VERSION).is_ok() {
+                option.push(Meta::Name(name));
+            }
+        }
+        if long {
+            let name = self.option_name("version")?;
+            if Self::insert_key(name.clone(), indices, VERSION).is_ok() {
+                option.push(Meta::Name(name));
+            }
+        }
+        if option.len() > 1 {
+            metas.push(Meta::Option(option));
+        }
         Ok(())
     }
 
-    fn insert_help(&mut self, metas: &mut Vec<Meta>, indices: &mut Indices) -> Result<(), Error> {
-        let (Some(h), Some(help)) = (self.option_name("h"), self.option_name("help")) else {
-            return Ok(());
-        };
-        Self::insert_key(h.clone(), indices, HELP)?;
-        Self::insert_key(help.clone(), indices, HELP)?;
-        metas.push(Meta::Option(vec![
-            Meta::Help(Cow::Borrowed("Displays this help message.")),
-            Meta::Name(h),
-            Meta::Name(help),
-        ]));
+    fn insert_help(
+        &mut self,
+        metas: &mut Vec<Meta>,
+        indices: &mut Indices,
+        short: bool,
+        long: bool,
+    ) -> Result<(), Error> {
+        let mut option = vec![Meta::Help(Cow::Borrowed("Displays this help message."))];
+        if short {
+            let name = self.option_name("h")?;
+            if Self::insert_key(name.clone(), indices, HELP).is_ok() {
+                option.push(Meta::Name(name));
+            }
+        }
+        if long {
+            let name = self.option_name("help")?;
+            if Self::insert_key(name.clone(), indices, HELP).is_ok() {
+                option.push(Meta::Name(name));
+            }
+        }
+        if option.len() > 1 {
+            metas.push(Meta::Option(option));
+        }
         Ok(())
     }
 
@@ -220,11 +200,14 @@ impl<S, P> Builder<S, P> {
         }
     }
 
-    fn option_name(&mut self, name: impl Into<Cow<'static, str>>) -> Option<Cow<'static, str>> {
+    fn option_name(
+        &mut self,
+        name: impl Into<Cow<'static, str>>,
+    ) -> Result<Cow<'static, str>, Error> {
         let mut outer = name.into();
         let name = outer.trim();
         match name.len() {
-            0 => return None,
+            0 => return Err(Error::InvalidName { name: outer }),
             1 => {
                 self.buffer.clear();
                 self.buffer.push_str(&self.short);
@@ -233,43 +216,36 @@ impl<S, P> Builder<S, P> {
             2.. => {
                 self.buffer.clear();
                 self.buffer.push_str(&self.long);
-                self.case.convert_in(name, &mut self.buffer).ok()?;
+                self.case.convert_in(name, &mut self.buffer)?;
             }
         }
         let inner = outer.to_mut();
         inner.clear();
         inner.push_str(&self.buffer);
-        Some(outer)
+        Ok(outer)
     }
 
-    fn verb_name(&mut self, name: impl Into<Cow<'static, str>>) -> Option<Cow<'static, str>> {
+    fn verb_name(
+        &mut self,
+        name: impl Into<Cow<'static, str>>,
+    ) -> Result<Cow<'static, str>, Error> {
         let mut outer = name.into();
         let name = outer.trim();
         match name.len() {
-            0 => return None,
+            0 => return Err(Error::InvalidName { name: outer }),
             1 => {
                 self.buffer.clear();
                 self.buffer.push_str(name);
             }
             2.. => {
                 self.buffer.clear();
-                self.case.convert_in(name, &mut self.buffer).ok()?;
+                self.case.convert_in(name, &mut self.buffer)?;
             }
         }
         let inner = outer.to_mut();
         inner.clear();
         inner.push_str(&self.buffer);
-        Some(outer)
-    }
-}
-
-impl<P: Parse> Builder<(), P> {
-    pub fn build(self) -> Result<Parser<P>, Error> {
-        Ok(Parser {
-            short: self.short,
-            long: self.long,
-            parse: self.parse?,
-        })
+        Ok(outer)
     }
 }
 
@@ -367,9 +343,19 @@ impl<S, P> Builder<S, P> {
     }
 }
 
+macro_rules! is {
+    ($left: expr $(, $rights: ident)+) => {
+        $($left == TypeId::of::<$rights>() || $left == TypeId::of::<Option<$rights>>() ||)+ false
+    };
+}
+
 impl<S: Scope, P> Builder<S, P> {
     pub fn help(self, help: impl Into<Cow<'static, str>>) -> Self {
         self.meta(Meta::Help(help.into()))
+    }
+
+    pub fn note(self, help: impl Into<Cow<'static, str>>) -> Self {
+        self.meta(Meta::Note(help.into()))
     }
 
     pub fn hide(self) -> Self {
@@ -380,25 +366,50 @@ impl<S: Scope, P> Builder<S, P> {
         self.meta(Meta::Show)
     }
 
-    fn meta(mut self, meta: Meta) -> Self {
-        self.scope.push(meta);
-        self
+    fn try_meta(mut self, meta: Result<Meta, Error>) -> Self {
+        match meta {
+            Ok(meta) => {
+                self.scope.push(meta);
+                self
+            }
+            Err(error) => {
+                self.parse = Err(error);
+                self
+            }
+        }
     }
 
-    fn type_name<T>(mut self) -> Self {
+    fn meta(self, meta: Meta) -> Self {
+        self.try_meta(Ok(meta))
+    }
+
+    fn type_name<T: 'static>(mut self) -> Self {
         let Some(name) = type_name::<T>().split("::").last() else {
             return self;
         };
-        self.buffer.clear();
-        let Ok(_) = self.case.convert_in(name, &mut self.buffer) else {
-            return self;
+        let identifier = TypeId::of::<T>();
+        let name = if is!(identifier, bool) {
+            Cow::Borrowed("boolean")
+        } else if is!(identifier, u8, u16, u32, u64, u128, usize, i8, i16, i32, i64, i128, isize) {
+            Cow::Borrowed("integer")
+        } else if is!(identifier, f32, f64) {
+            Cow::Borrowed("number")
+        } else {
+            self.buffer.clear();
+            let Ok(_) = self.case.convert_in(name, &mut self.buffer) else {
+                return self;
+            };
+            Cow::Owned(self.buffer.clone())
         };
-        let value = self.buffer.clone();
-        self.meta(Meta::Type(Cow::Owned(value)))
+        self.meta(Meta::Type(name, identifier))
     }
 }
 
 impl<S: scope::Node, P> Builder<S, P> {
+    pub fn usage(self, help: impl Into<Cow<'static, str>>) -> Self {
+        self.meta(Meta::Usage(help.into()))
+    }
+
     pub fn group<Q>(
         self,
         build: impl FnOnce(Builder<scope::Group, At>) -> Builder<scope::Group, Q>,
@@ -437,7 +448,7 @@ impl<S: scope::Node, P> Builder<S, P> {
         })
     }
 
-    pub fn option<T: FromStr, Q>(
+    pub fn option<T: FromStr + 'static, Q>(
         self,
         build: impl FnOnce(Builder<scope::Option, Value<T>>) -> Builder<scope::Option, Q>,
     ) -> Builder<S, P::Output>
@@ -466,32 +477,99 @@ impl<S: scope::Version, P> Builder<S, P> {
     }
 }
 
+impl Builder<scope::Root> {
+    pub const fn new() -> Self {
+        Self {
+            case: Case::Kebab,
+            short: Cow::Borrowed("-"),
+            long: Cow::Borrowed("--"),
+            buffer: String::new(),
+            parse: Ok(At(())),
+            scope: scope::Root::new(),
+        }
+    }
+
+    pub fn case(mut self, case: Case) -> Self {
+        self.case = case;
+        self
+    }
+
+    pub fn short(mut self, prefix: impl Into<Cow<'static, str>>) -> Self {
+        self.short = prefix.into();
+        self
+    }
+
+    pub fn long(mut self, prefix: impl Into<Cow<'static, str>>) -> Self {
+        self.long = prefix.into();
+        self
+    }
+}
+
+impl<P> Builder<scope::Root, P> {
+    pub fn build(self) -> Result<Parser<Node<P>>, Error>
+    where
+        P: Parse,
+    {
+        let (root, mut builder) = self.swap_scope(());
+        let mut indices = Indices::default();
+        let mut meta = Meta::from(root);
+        builder.descend(&mut meta, &mut indices)?;
+        Ok(Parser {
+            short: builder.short,
+            long: builder.long,
+            parse: Node {
+                indices,
+                meta,
+                parse: builder.parse?,
+            },
+        })
+    }
+
+    pub fn name(self, name: impl Into<Cow<'static, str>>) -> Self {
+        self.meta(Meta::Name(name.into()))
+    }
+}
+
+impl<P> Builder<scope::Group, P> {
+    pub fn name(self, name: impl Into<Cow<'static, str>>) -> Self {
+        self.meta(Meta::Name(name.into()))
+    }
+}
+
 impl<P> Builder<scope::Verb, P> {
     pub fn name(mut self, name: impl Into<Cow<'static, str>>) -> Self {
-        match self.verb_name(name) {
-            Some(name) => self.meta(Meta::Name(name)),
-            None => self,
-        }
+        let meta = self.verb_name(name).map(Meta::Name);
+        self.try_meta(meta)
     }
 }
 
 impl<P> Builder<scope::Option, P> {
     pub fn name(mut self, name: impl Into<Cow<'static, str>>) -> Self {
-        match self.option_name(name) {
-            Some(name) => self.meta(Meta::Name(name)),
-            None => self,
-        }
+        let meta = self.option_name(name).map(Meta::Name);
+        self.try_meta(meta)
     }
 
     pub fn position(self) -> Self {
         self.meta(Meta::Position)
     }
 
-    pub fn default<T: Clone + Display>(self, default: T) -> Builder<scope::Option, Default<P, T>>
+    pub fn default<T: Clone + fmt::Debug>(self, default: T) -> Builder<scope::Option, Default<P, T>>
     where
         P: Parse<Value = Option<T>>,
     {
-        self.meta(Meta::Default(Cow::Owned(format!("{default}"))))
+        let display = format!("{default:?}");
+        self.default_with(default, display)
+    }
+
+    pub fn default_with<T: Clone>(
+        self,
+        default: T,
+        debug: impl Into<Cow<'static, str>>,
+    ) -> Builder<scope::Option, Default<P, T>>
+    where
+        P: Parse<Value = Option<T>>,
+    {
+        self.meta(Meta::Default(debug.into()))
             .map_parse(|parse| Default(parse, default))
     }
 

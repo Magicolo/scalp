@@ -1,8 +1,7 @@
-use core::fmt;
-use scalp::{Builder, Error, Options};
-use std::{any::type_name, str::FromStr};
-use termion::style::{Bold, Italic, Reset, Underline};
 use anyhow::anyhow;
+use core::fmt;
+use scalp::{scope, Builder, Error, Options, Parse};
+use std::{any::type_name, str::FromStr};
 
 pub struct Docker {
     pub global: GlobalOptions,
@@ -18,31 +17,72 @@ pub struct GlobalOptions {
 }
 
 pub enum Command {
+    // Common Commands
+    Run,
+    Execute,
+    Process,
+    Build,
+    Pull,
+    Push,
+    Images,
+    Login,
+    Logout,
+    Search,
+    Version,
+    Info,
+
+    // Management Commands
+    Builder,
+    Buildx,
+    Compose,
+    Container,
+    Context,
+    Image,
+    Manifest,
+    Network,
+    Plugin,
+    System,
+    Trust,
+    Volume,
+
+    // Swarm Commands
+    Swarm,
+
+    // Commands
     Attach {
         detach_keys: Option<String>,
         no_stdin: bool,
         sig_proxy: bool,
     },
-    Build,
     Commit,
     Copy,
     Create,
     Diff,
     Events,
-    Exec,
     Export,
     History,
-    Images,
     Import,
-    Info,
     Inspect,
     Kill {
         signal: Option<String>,
     },
-    Boba {
-        boba: Vec<String>,
-        fett: usize,
-    }
+    Load,
+    Logs,
+    Pause,
+    Port,
+    Rename,
+    Restart,
+    RemoveContainer,
+    RemoveImage,
+    Save,
+    Start,
+    Stats,
+    Stop,
+    Tag,
+    Top,
+    Unpause,
+    Update,
+    Wait,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -70,115 +110,180 @@ impl FromStr for LogLevel {
             "3" | "warn" => Ok(LogLevel::Warn),
             "4" | "error" => Ok(LogLevel::Error),
             "5" | "fatal" => Ok(LogLevel::Fatal),
-            _ => Err(anyhow!("Failed to parse '{s}' as a {}", type_name::<Self>())),
+            _ => Err(anyhow!(
+                "Failed to parse '{s}' as a {}",
+                type_name::<Self>()
+            )),
         }
     }
 }
 
+fn common_commands(builder: Builder<scope::Group>) -> Builder<scope::Group, impl Parse<Value = Option<Command>>> {
+    builder
+        .name("Common Commands:")
+        .verb(|verb| verb.name("run").map(|_| Command::Run))
+        .verb(|verb| verb.name("exec").map(|_| Command::Execute))
+        .verb(|verb| verb.name("ps").map(|_| Command::Process))
+        .verb(|verb| verb.name("build").map(|_| Command::Build))
+        .verb(|verb| verb.name("pull").map(|_| Command::Pull))
+        .verb(|verb| verb.name("push").map(|_| Command::Push))
+        .verb(|verb| verb.name("images").map(|_| Command::Images))
+        .verb(|verb| verb.name("login").map(|_| Command::Login))
+        .verb(|verb| verb.name("logout").map(|_| Command::Logout))
+        .verb(|verb| verb.name("search").map(|_| Command::Search))
+        .verb(|verb| verb.name("version").map(|_| Command::Version))
+        .verb(|verb| verb.name("info").map(|_| Command::Info))
+        .any::<Command>()
+}
+
+fn management_commands(builder: Builder<scope::Group>) -> Builder<scope::Group, impl Parse<Value = Option<Command>>> {
+    builder
+        .name("Management Commands:")
+        .verb(|verb| verb.name("builder").map(|_| Command::Builder))
+        .verb(|verb| verb.name("buildx").map(|_| Command::Buildx))
+        .verb(|verb| verb.name("compose").map(|_| Command::Compose))
+        .verb(|verb| verb.name("container").map(|_| Command::Container))
+        .verb(|verb| verb.name("context").map(|_| Command::Context))
+        .verb(|verb| verb.name("image").map(|_| Command::Image))
+        .verb(|verb| verb.name("manifest").map(|_| Command::Manifest))
+        .verb(|verb| verb.name("network").map(|_| Command::Network))
+        .verb(|verb| verb.name("plugin").map(|_| Command::Plugin))
+        .verb(|verb| verb.name("system").map(|_| Command::System))
+        .verb(|verb| verb.name("trust").map(|_| Command::Trust))
+        .verb(|verb| verb.name("volume").map(|_| Command::Volume))
+        .any::<Command>()
+}
+
+fn swarm_commands(builder: Builder<scope::Group>) -> Builder<scope::Group, impl Parse<Value = Option<Command>>> {
+    builder
+        .name("Swarm Commands:")
+        .verb(|verb| verb.name("swarm").map(|_| Command::Swarm))
+        .any::<Command>()
+}
+
+fn commands(builder: Builder<scope::Group>) -> Builder<scope::Group, impl Parse<Value = Option<Command>>> {
+    builder
+        .name("Commands:")
+        .verb(|verb| verb
+            .name("attach")
+            .help("Attach local standard input, output, and error streams to a running container.")
+            .option(|option| option
+                .name("detach-keys")
+                .help("Override the key sequence for detaching a container.")
+            )
+            .option(|option| option
+                .name("no-stdin")
+                .help("Do not attach STDIN.")
+                .default(false)
+            )
+            .option(|option| option
+                .name("sig-proxy")
+                .help("Proxy all received signals to the process.")
+                .default(true)
+            )
+            .map(|(detach_keys, no_stdin, sig_proxy)| Command::Attach { detach_keys, no_stdin, sig_proxy })
+        )
+        .verb(|verb| verb.name("commit").map(|_| Command::Commit))
+        .verb(|verb| verb.name("cp").map(|_| Command::Copy))
+        .verb(|verb| verb.name("create").map(|_| Command::Create))
+        .verb(|verb| verb.name("diff").map(|_| Command::Diff))
+        .verb(|verb| verb.name("events").map(|_| Command::Events))
+        .verb(|verb| verb.name("export").map(|_| Command::Export))
+        .verb(|verb| verb.name("history").map(|_| Command::History))
+        .verb(|verb| verb.name("import").map(|_| Command::Import))
+        .verb(|verb| verb.name("inspect").map(|_| Command::Inspect))
+        .verb(|verb| verb
+            .name("kill")
+            .help("Signal to send to the container.")
+            .option(|option| option.name("s").name("signal"))
+            .map(|(signal,)| Command::Kill { signal })
+        )
+        .verb(|verb| verb.name("load").map(|_| Command::Load))
+        .verb(|verb| verb.name("logs").map(|_| Command::Logs))
+        .verb(|verb| verb.name("pause").map(|_| Command::Pause))
+        .verb(|verb| verb.name("port").map(|_| Command::Port))
+        .verb(|verb| verb.name("rename").map(|_| Command::Rename))
+        .verb(|verb| verb.name("restart").map(|_| Command::Restart))
+        .verb(|verb| verb.name("rm").map(|_| Command::RemoveContainer))
+        .verb(|verb| verb.name("rmi").map(|_| Command::RemoveImage))
+        .verb(|verb| verb.name("save").map(|_| Command::Save))
+        .verb(|verb| verb.name("start").map(|_| Command::Start))
+        .verb(|verb| verb.name("stats").map(|_| Command::Stats))
+        .verb(|verb| verb.name("stop").map(|_| Command::Stop))
+        .verb(|verb| verb.name("tag").map(|_| Command::Tag))
+        .verb(|verb| verb.name("top").map(|_| Command::Top))
+        .verb(|verb| verb.name("unpause").map(|_| Command::Unpause))
+        .verb(|verb| verb.name("update").map(|_| Command::Update))
+        .verb(|verb| verb.name("wait").map(|_| Command::Wait))
+        .any::<Command>()
+}
+
+fn global_options(builder: Builder<scope::Group>) -> Builder<scope::Group, impl Parse<Value = GlobalOptions>> {
+    builder 
+        .name("Global Options:")
+        .option(|option| option
+            .name("config")
+            .help("Location of client config files.")
+            .default("/home/goulade/.docker".to_string())
+        )
+        .option(|option| option
+            .name("c")
+            .name("context")
+            .help(r#"Name of the context to use to connect to the daemon (overrides default context set with "docker context use")."#)
+            .environment("DOCKER_HOST")
+        )
+        .option(|option| option
+            .name("D")
+            .name("debug")
+            .help("Enable debug mode.")
+            .default(false)
+        )
+        .option(|option| option
+            .name("H")
+            .name("host")
+            .help("Daemon socket to connect to.")
+            .many(Some(1))
+        )
+        .option(|option| option
+            .name("l")
+            .name("log-level")
+            .help("Set the logging level.")
+            .default(LogLevel::Info)
+        )
+        .options([Options::version(true, true), Options::help(true, true)])
+        .map(|(config, context, debug, host, log_level)| GlobalOptions {
+            config,
+            context,
+            debug,
+            host: host.unwrap_or_default(),
+            log_level
+        })
+}
+
 fn main() -> Result<(), Error> {
     let parser = Builder::new()
-        .root(|build| build
-            .version(env!("CARGO_PKG_VERSION"))
-            .help(format!("{Underline}Usage: docker [OPTIONS] COMMAND{Reset}\n\nA self-sufficient runtime for containers."))
-            .group(|build| build.help(format!("{Bold}Common Commands:{Reset}")))
-            .group(|build| build.help(format!("{Bold}Management Commands:{Reset}")))
-            .group(|build| build.help(format!("{Bold}Swarm Commands:{Reset}")))
-            .group(|build| build
-                .help(format!("{Bold}Commands:{Reset}"))
-                .verb(|build| build
-                    .name("attach")
-                    .help("Attach local standard input, output, and error streams to a running container.")
-                    .option(|build| build
-                        .name("detach-keys")
-                        .help("Override the key sequence for detaching a container.")
-                    )
-                    .option(|build| build
-                        .name("no-stdin")
-                        .help("Do not attach STDIN.")
-                        .default(false)
-                    )
-                    .option(|build| build
-                        .name("sig-proxy")
-                        .help("Proxy all received signals to the process.")
-                        .default(true)
-                    )
-                    .map(|(detach_keys, no_stdin, sig_proxy)| Command::Attach { detach_keys, no_stdin, sig_proxy })
-                )
-                .verb(|build| build
-                    .name("kill")
-                    .help("Signal to send to the container.")
-                    .option(|build| build
-                        .name("s")
-                        .name("signal")
-                    )
-                    .map(|(signal,)| Command::Kill { signal })
-                )
-                .verb(|build| build
-                    .name("boba")
-                    .options([Options::Help, Options::Version])
-                    .option(|build| build
-                        .position()
-                        .help("Poulah")
-                        .many(None)
-                    )
-                    .option(|build| build
-                        .name("fett")
-                        .default(100)    
-                    )
-                    .map(|(boba, fett)| Command::Boba { boba, fett })
-                )
-                .any()
-            )
-            .group(|build| build
-                .help(format!("{Bold}Global Options:{Reset}"))
-                .option(|build| build
-                    .name("config")
-                    .help("Location of client config files.")
-                    .default("/home/goulade/.docker".to_string())
-                )
-                .option(|build| build
-                    .name("c")
-                    .name("context")
-                    .help(r#"Name of the context to use to connect to the daemon (overrides DOCKER_HOST env var and default context set with "docker context use")."#)
-                    .environment("DOCKER_HOST")
-                )
-                .option(|build| build
-                    .name("D")
-                    .name("debug")
-                    .help("Enable debug mode.")
-                )
-                .option(|build| build
-                    .name("H")
-                    .name("host")
-                    .help("Daemon socket to connect to.")
-                    .many(Some(1))
-                )
-                .option(|build| build
-                    .name("l")
-                    .name("log-level")
-                    .help("Set the logging level.")
-                    .default(LogLevel::Info)
-                )
-                .options([Options::Version, Options::Help])
-                .map(|(config, context, debug, host, log_level)| GlobalOptions {
-                    config,
-                    context,
-                    debug: debug.unwrap_or(false),
-                    host,
-                    log_level
-                })
-            )
-            .help(format!("Run 'docker COMMAND --help' for more information on a command.\n\n{Italic}For more help on how to use Docker, head to https://docs.docker.com/go/guides/{Reset}\n"))
-            .try_map(|(_common, _management, _swarm, commands, global)|
-                Ok(Docker {
-                    command: commands.ok_or(anyhow!("Missing command."))?,
-                    global
-                })
-            )
+        .name("docker")
+        .version(env!("CARGO_PKG_VERSION"))
+        .usage("Usage: docker [OPTIONS] COMMAND")
+        .help("A self-sufficient runtime for containers.")
+        .help("")
+        .group(|group| group
+            .group(common_commands)
+            .group(management_commands)
+            .group(swarm_commands)
+            .group(commands)
+            .any::<Command>()
+            .try_map(|command| Ok(command.ok_or(anyhow!("Missing command."))?))
         )
+        .group(global_options)
+        .help("Run 'docker COMMAND --help' for more information on a command.")
+        .help("")
+        .note("For more help on how to use Docker, head to https://docs.docker.com/go/guides/")
+        .map(|(command, global)| Docker { command, global })
         .build()?;
     let arguments = [
-        "--config", "boba", "--debug", "false", "-H", "jango", "--host", "karl", "--help", "boba", "--fett", "1265", "sweet", "bowl"
+        "--help", // "--config", "boba", "--debug", "false", "-H", "jango", "--host", "karl", "--help", "boba",
+                 // "--fett", "1265", "sweet", "bowl",
     ];
     let environment = [("DOCKER_HOST", "fett")];
     let docker = parser.parse_with(arguments, environment)?.unwrap();
