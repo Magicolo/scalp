@@ -128,3 +128,192 @@ const BREAK: usize = usize::MAX - 2;
 const SHIFT: u32 = 5;
 const MASK: usize = (1 << SHIFT) - 1;
 const MAXIMUM: u32 = usize::BITS - 14;
+
+// mod boba {
+//     use crate::{
+//         error::Error,
+//         parse::Parse,
+//         parse::{At, Value},
+//         scope::{self, Scope},
+//         stack::Stack,
+//     };
+//     use std::{marker::PhantomData, str::FromStr};
+
+//     pub struct Builder<S, P> {
+//         scope: S,
+//         parse: P,
+//     }
+
+//     pub struct Invalid<S, P>(S, P);
+
+//     pub fn root() -> impl Build<Scope = scope::Root, Parse = At<()>> {
+//         Builder {
+//             scope: scope::Root::new(),
+//             parse: Value(PhantomData),
+//         }
+//     }
+//     pub fn group() -> impl Build<Scope = scope::Group, Parse = At<()>> {
+//         Builder {
+//             scope: scope::Group::new(),
+//             parse: Value(PhantomData),
+//         }
+//     }
+//     pub fn verb() -> impl Build<Scope = scope::Verb, Parse = At<()>> {
+//         Builder {
+//             scope: scope::Verb::new(),
+//             parse: Value(PhantomData),
+//         }
+//     }
+    
+//     pub fn option<T: FromStr + 'static>() -> impl Build<Scope = scope::Option, Parse = Value<T>> {
+//         Builder {
+//             scope: scope::Option::new(),
+//             parse: Value(PhantomData),
+//         }
+//     }
+
+//     pub trait Build {
+//         type Scope: Scope;
+//         type Parse: Parse;
+//         type Next<P>: Build<Scope = Self::Scope>;
+
+//         fn parts(self) -> (Self::Scope, Self::Parse);
+//         fn build(self) -> Result<Self::Parse, Error>;
+//         fn child<B: Build>(self, child: B) -> Self::Next<B::Parse>
+//         where
+//             Self::Scope: scope::Parent,
+//             B::Scope: scope::Child;
+//     }
+
+//     impl<S: Scope, P: Parse> Build for Invalid<S, P> {
+//         type Scope = S;
+//         type Parse = P;
+//         type Next<Q> = Self;
+
+//         fn parts(self) -> (Self::Scope, Self::Parse) {
+//             (self.0, self.1)
+//         }
+
+//         fn build(self) -> Result<Self::Parse, Error> {
+//             todo!()
+//         }
+
+//         fn child<B: Build>(self, child: B) -> Self::Next<B::Parse>
+//         where
+//             Self::Scope: scope::Parent,
+//             B::Scope: scope::Child,
+//         {
+//             self
+//         }
+//     }
+
+//     impl<P: Parse + Stack> Build for Builder<scope::Root, P> {
+//         type Scope = scope::Root;
+//         type Parse = P;
+//         type Next<Q> = Builder<scope::Root, P::Push<Q>>;
+
+//         fn parts(self) -> (Self::Scope, Self::Parse) {
+//             (self.scope, self.parse)
+//         }
+
+//         fn build(self) -> Result<Self::Parse, Error> {
+//             todo!()
+//         }
+
+//         fn child<B: Build>(mut self, child: B) -> Self::Next<B::Parse>
+//         where
+//             Self::Scope: scope::Parent,
+//             B::Scope: scope::Child,
+//         {
+//             let pair = child.parts();
+//             self.scope.push(pair.0.into());
+//             Builder {
+//                 scope: self.scope,
+//                 parse: self.parse.push(pair.1),
+//             }
+//         }
+//     }
+
+//     impl<P: Parse + Stack> Build for Builder<scope::Group, P> {
+//         type Scope = scope::Group;
+//         type Parse = P;
+//         type Next<Q> = Builder<scope::Group, P::Push<Q>>;
+
+//         fn parts(self) -> (Self::Scope, Self::Parse) {
+//             (self.scope, self.parse)
+//         }
+
+//         fn build(self) -> Result<Self::Parse, Error> {
+//             todo!()
+//         }
+
+//         fn child<B: Build>(mut self, child: B) -> Self::Next<B::Parse>
+//         where
+//             Self::Scope: scope::Parent,
+//             B::Scope: scope::Child,
+//         {
+//             let pair = child.parts();
+//             self.scope.push(pair.0.into());
+//             Builder {
+//                 scope: self.scope,
+//                 parse: self.parse.push(pair.1),
+//             }
+//         }
+//     }
+
+//     impl<P: Parse + Stack> Build for Builder<scope::Verb, P> {
+//         type Scope = scope::Verb;
+//         type Parse = P;
+//         type Next<Q> = Builder<scope::Verb, P::Push<Q>>;
+
+//         fn parts(self) -> (Self::Scope, Self::Parse) {
+//             (self.scope, self.parse)
+//         }
+
+//         fn build(self) -> Result<Self::Parse, Error> {
+//             todo!()
+//         }
+
+//         fn child<B: Build>(mut self, child: B) -> Self::Next<B::Parse>
+//         where
+//             Self::Scope: scope::Parent,
+//             B::Scope: scope::Child,
+//         {
+//             let pair = child.parts();
+//             self.scope.push(pair.0.into());
+//             Builder {
+//                 scope: self.scope,
+//                 parse: self.parse.push(pair.1),
+//             }
+//         }
+//     }
+
+//     impl<P: Parse> Build for Builder<scope::Option, P> {
+//         type Scope = scope::Option;
+//         type Parse = P;
+//         type Next<Q> = Invalid<scope::Option, P>;
+
+//         fn parts(self) -> (Self::Scope, Self::Parse) {
+//             (self.scope, self.parse)
+//         }
+
+//         fn build(self) -> Result<Self::Parse, Error> {
+//             todo!()
+//         }
+
+//         fn child<B: Build>(self, _: B) -> Self::Next<B::Parse>
+//         where
+//             Self::Scope: scope::Parent,
+//             B::Scope: scope::Child,
+//         {
+//             Invalid(self.scope, self.parse)
+//         }
+//     }
+
+//     fn karl() {
+//         root()
+//             .child(verb().child(group()).child(option::<u8>()))
+//             .child(group().child(group()).child(verb()).child(option::<u8>()))
+//             .child(option::<u8>());
+//     }
+// }

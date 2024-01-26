@@ -194,8 +194,15 @@ fn commands(builder: Builder<scope::Group>) -> Builder<scope::Group, impl Parse<
         .verb(|verb| verb.name("inspect").map(|_| Command::Inspect))
         .verb(|verb| verb
             .name("kill")
-            .help("Signal to send to the container.")
-            .option(|option| option.name("s").name("signal"))
+            .usage("Usage:  docker kill [OPTIONS] CONTAINER [CONTAINER...]")
+            .help("Kill one or more running containers.")
+            .help("")
+            .help("Aliases: docker container kill, docker kill")
+            .help("")
+            .option(|option| option
+                .name("s")
+                .name("signal")
+                .help("Signal to send to the container."))
             .map(|(signal,)| Command::Kill { signal })
         )
         .verb(|verb| verb.name("load").map(|_| Command::Load))
@@ -224,7 +231,7 @@ fn global_options(builder: Builder<scope::Group>) -> Builder<scope::Group, impl 
         .option(|option| option
             .name("config")
             .help("Location of client config files.")
-            .default("/home/goulade/.docker".to_string())
+            .default("/home/goulade/.docker")
         )
         .option(|option| option
             .name("c")
@@ -282,8 +289,7 @@ fn main() -> Result<(), Error> {
         .map(|(command, global)| Docker { command, global })
         .build()?;
     let arguments = [
-        "--help", // "--config", "boba", "--debug", "false", "-H", "jango", "--host", "karl", "--help", "boba",
-                 // "--fett", "1265", "sweet", "bowl",
+        "--config", "boba", "--debug", "false", "-H", "jango", "--host", "karl", "kill", "--help",
     ];
     let environment = [("DOCKER_HOST", "fett")];
     let docker = parser.parse_with(arguments, environment)?.unwrap();

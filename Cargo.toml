@@ -10,9 +10,8 @@ license = "MIT"
 
 [dependencies]
 termion = "*"
+term_size = "*"
 anyhow = "*"
-
-[dev-dependencies]
 
 [workspace]
 members = [ "scalp_core", "scalp_macro", "scalp_core" ]

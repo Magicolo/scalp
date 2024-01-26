@@ -1,63 +1,116 @@
-pub trait Push<T> {
-    type Output;
-    fn push(self, item: T) -> Self::Output;
-}
-
-pub trait Pop {
-    type Item;
-    type Output;
-    fn pop(self) -> (Self::Item, Self::Output);
-}
-
-pub trait Count {
+pub trait Stack {
     const COUNT: usize;
+    type Push<T>: Stack;
+    type Pop: Stack;
+    type Clear: Stack;
+    type Item;
+
+    fn push<T>(self, item: T) -> Self::Push<T>;
+    fn pop(self) -> (Self::Item, Self::Pop);
+    fn clear(self) -> Self::Clear;
+}
+
+pub struct Overflow<T>(T);
+
+impl Stack for () {
+    const COUNT: usize = 0;
+    type Push<T> = (T,);
+    type Pop = ();
+    type Clear = ();
+    type Item = ();
+
+    #[inline]
+    fn push<T>(self, item: T) -> Self::Push<T> {
+        (item,)
+    }
+
+    #[inline]
+    fn pop(self) -> (Self::Item, Self::Pop) {
+        ((), ())
+    }
+
+    #[inline]
+    fn clear(self) -> Self::Clear {}
+}
+
+impl<T: Stack> Stack for Overflow<T> {
+    const COUNT: usize = T::COUNT;
+    type Push<U> = Overflow<T>;
+    type Pop = T::Pop;
+    type Clear = T::Clear;
+    type Item = T::Item;
+
+    #[inline]
+    fn push<U>(self, _: U) -> Self::Push<T> {
+        self
+    }
+
+    #[inline]
+    fn pop(self) -> (Self::Item, Self::Pop) {
+        self.0.pop()
+    }
+
+    #[inline]
+    fn clear(self) -> Self::Clear {
+        self.0.clear()
+    }
 }
 
 macro_rules! stack {
-    () => {
-        impl Count for () {
-            const COUNT: usize = 0;
-        }
-
-        impl Pop for () {
-            type Item = ();
-            type Output = ();
+    (@inner) => { };
+    ($tail: ident $(, $head: ident)*) => {
+        impl<$tail, $($head,)*> Stack for ($($head,)* $tail,) {
+            const COUNT: usize = 1 + <($($head,)*) as Stack>::COUNT;
+            type Push<T> = Overflow<Self>;
+            type Pop = ($($head,)*);
+            type Clear = ();
+            type Item = $tail;
 
             #[inline]
-            fn pop(self) -> ((), ()) {
-                ((), ())
+            fn push<T>(self, _: T) -> Self::Push<T> {
+                Overflow(self)
             }
+
+            #[inline]
+            fn pop(self) -> (Self::Item, Self::Pop) {
+                #[allow(non_snake_case)]
+                let ($($head,)* $tail,) = self;
+                ($tail, ($($head,)*))
+            }
+
+            #[inline]
+            fn clear(self) -> Self::Clear { }
         }
+
+        stack!(@inner $($head),*);
     };
-    ($head: ident $(, $tail: ident)*) => {
-        impl<$head $(, $tail)*> Push<$head> for ($($tail,)*) {
-            type Output = ($($tail,)* $head,);
+    (@inner $tail: ident $(, $head: ident)*) => {
+        impl<$tail, $($head,)*> Stack for ($($head,)* $tail,) {
+            const COUNT: usize = 1 + <($($head,)*) as Stack>::COUNT;
+            type Push<T> = ($($head,)* $tail, T,);
+            type Pop = ($($head,)*);
+            type Clear = ();
+            type Item = $tail;
 
             #[inline]
-            fn push(self, item: $head) -> Self::Output {
+            fn push<T>(self, item: T) -> Self::Push<T> {
                 #[allow(non_snake_case)]
-                let ($($tail,)*) = self;
-                ($($tail,)* item,)
+                let ($($head,)* $tail,) = self;
+                ($($head,)* $tail, item,)
             }
-        }
-
-        impl<$head $(, $tail)*> Pop for ($($tail,)* $head,) {
-            type Item = $head;
-            type Output = ($($tail,)*);
 
             #[inline]
-            fn pop(self) -> (Self::Item, Self::Output) {
+            fn pop(self) -> (Self::Item, Self::Pop) {
                 #[allow(non_snake_case)]
-                let ($($tail,)* $head,) = self;
-                ($head, ($($tail,)*))
+                let ($($head,)* $tail,) = self;
+                ($tail, ($($head,)*))
             }
+
+            #[inline]
+            fn clear(self) -> Self::Clear { }
         }
 
-        impl<$head $(, $tail)*> Count for ($($tail,)* $head,) where ($($tail,)*): Count {
-            const COUNT: usize = 1 + <($($tail,)*) as Count>::COUNT;
-        }
-
-        stack!($($tail),*);
+        stack!(@inner $($head),*);
     };
 }
 

@@ -5,7 +5,7 @@ use crate::{
         Any, At, Default, Environment, Indices, Many, Map, Node, Parse, Parser, Require, Value,
     },
     scope::{self, Scope},
-    stack::{Count, Push},
+    stack::Stack,
     Meta, Options, BREAK, HELP, MAXIMUM, SHIFT, VERSION,
 };
 use core::fmt;
@@ -42,10 +42,10 @@ impl<S, P> Builder<S, P> {
             }
             _ => return Ok(()),
         };
-        if version {
+        if let Some(true) = version {
             self.insert_version(metas, indices, true, true)?;
         }
-        if help {
+        if let None | Some(true) = help {
             self.insert_help(metas, indices, true, true)?;
         }
         Self::insert_key(self.long.clone(), indices, BREAK)?;
@@ -58,39 +58,71 @@ impl<S, P> Builder<S, P> {
         mask: usize,
         shift: u32,
         indices: &mut Indices,
-    ) -> Result<(bool, bool), Error> {
+    ) -> Result<(Option<bool>, Option<bool>), Error> {
         let mut index = 0;
-        let mut version = true;
-        let mut help = true;
+        let mut version = None;
+        let mut help = None;
+        let mut hide = 0;
         for i in 0..metas.len() {
             let value = (index << shift) | mask;
             match metas.get_mut(i) {
+                Some(Meta::Version(_)) => {
+                    if hide == 0 {
+                        version = version.or(Some(true))
+                    }
+                }
+                Some(Meta::Help(_) | Meta::Name(_) | Meta::Usage(_) | Meta::Note(_)) => {
+                    if hide == 0 {
+                        help = help.or(Some(true))
+                    }
+                }
+                Some(Meta::Hide) => hide += 1,
+                Some(Meta::Show) => hide = usize::saturating_sub(hide, 1),
                 Some(Meta::Option(metas)) => {
                     self.descend_option(metas, indices, value)?;
                     index += 1;
+                    if hide == 0 {
+                        help = help.or(Some(true))
+                    }
                 }
                 Some(Meta::Verb(metas)) => {
                     self.descend_verb(metas, indices, value)?;
                     index += 1;
+                    if hide == 0 {
+                        help = help.or(Some(true))
+                    }
                 }
                 Some(Meta::Group(_)) if shift > MAXIMUM => {
                     return Err(Error::GroupNestingLimitOverflow)
                 }
                 Some(Meta::Group(metas)) => {
                     let pair = self.descend_node(metas, value, shift + SHIFT, indices)?;
-                    version &= pair.0;
-                    help &= pair.1;
+                    version = match (version, pair.0) {
+                        (None, None) => None,
+                        (None, Some(right)) => Some(right),
+                        (Some(left), None) => Some(left),
+                        (Some(left), Some(right)) => Some(left && right),
+                    };
+                    help = match (help, pair.0) {
+                        (None, None) => None,
+                        (None, Some(right)) => Some(right),
+                        (Some(left), None) => Some(left),
+                        (Some(left), Some(right)) => Some(left && right),
+                    };
                     index += 1;
                 }
                 Some(Meta::Options(Options::Version { short, long })) => {
                     let (short, long) = (*short, *long);
                     self.insert_version(metas, indices, short, long)?;
-                    version = false;
+                    version = Some(false);
+                    if hide == 0 {
+                        help = help.or(Some(true))
+                    }
                 }
                 Some(Meta::Options(Options::Help { short, long })) => {
                     let (short, long) = (*short, *long);
                     self.insert_help(metas, indices, short, long)?;
-                    help = false;
+                    help = Some(false);
                 }
                 None => break,
                 _ => {}
@@ -405,7 +437,7 @@ impl<S: Scope, P> Builder<S, P> {
     }
 }
 
-impl<S: scope::Node, P> Builder<S, P> {
+impl<S: scope::Parent, P> Builder<S, P> {
     pub fn usage(self, help: impl Into<Cow<'static, str>>) -> Self {
         self.meta(Meta::Usage(help.into()))
     }
@@ -413,9 +445,9 @@ impl<S: scope::Node, P> Builder<S, P> {
     pub fn group<Q>(
         self,
         build: impl FnOnce(Builder<scope::Group, At>) -> Builder<scope::Group, Q>,
-    ) -> Builder<S, P::Output>
+    ) -> Builder<S, P::Push<Q>>
     where
-        P: Push<Q>,
+        P: Stack,
     {
         let (scope, old, group) = self.swap_both(scope::Group::new(), At(()));
         let (scope, mut builder) = build(group)
@@ -428,9 +460,9 @@ impl<S: scope::Node, P> Builder<S, P> {
     pub fn verb<Q>(
         self,
         build: impl FnOnce(Builder<scope::Verb, At>) -> Builder<scope::Verb, Q>,
-    ) -> Builder<S, P::Output>
+    ) -> Builder<S, P::Push<Node<Q>>>
     where
-        P: Push<Node<Q>>,
+        P: Stack,
     {
         let (scope, old, builder) = self.swap_both(scope::Verb::new(), At(()));
         let (verb, mut builder) = build(builder).swap_scope(scope);
@@ -451,9 +483,9 @@ impl<S: scope::Node, P> Builder<S, P> {
     pub fn option<T: FromStr + 'static, Q>(
         self,
         build: impl FnOnce(Builder<scope::Option, Value<T>>) -> Builder<scope::Option, Q>,
-    ) -> Builder<S, P::Output>
+    ) -> Builder<S, P::Push<Q>>
     where
-        P: Count + Push<Q>,
+        P: Stack,
     {
         let (scope, old, option) = self.swap_both(scope::Option::new(), Value(PhantomData));
         let (option, mut builder) = build(option.type_name::<T>())
@@ -553,10 +585,14 @@ impl<P> Builder<scope::Option, P> {
         self.meta(Meta::Position)
     }
 
-    pub fn default<T: Clone + fmt::Debug>(self, default: T) -> Builder<scope::Option, Default<P, T>>
+    pub fn default<T: Clone + fmt::Debug>(
+        self,
+        default: impl Into<T>,
+    ) -> Builder<scope::Option, Default<P, T>>
     where
         P: Parse<Value = Option<T>>,
     {
+        let default = default.into();
         let display = format!("{default:?}");
         self.default_with(default, display)
     }

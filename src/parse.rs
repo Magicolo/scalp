@@ -2,7 +2,7 @@ use crate::{
     error::Error,
     help::{help, version},
     spell::Spell,
-    stack::{Count, Pop, Push},
+    stack::Stack,
     Meta, BREAK, HELP, MASK, SHIFT, VERSION,
 };
 use std::{
@@ -63,24 +63,24 @@ pub trait Any<T> {
     fn any(self) -> Option<T>;
 }
 
-impl<T, P: Push<T>> Push<T> for At<P> {
-    type Output = At<P::Output>;
+impl<T: Stack> Stack for At<T> {
+    const COUNT: usize = T::COUNT;
+    type Push<U> = At<T::Push<U>>;
+    type Pop = At<T::Pop>;
+    type Clear = At<T::Clear>;
+    type Item = T::Item;
 
-    fn push(self, item: T) -> Self::Output {
+    fn push<U>(self, item: U) -> Self::Push<U> {
         At(self.0.push(item))
     }
-}
 
-impl<T: Count> Count for At<T> {
-    const COUNT: usize = T::COUNT;
-}
+    fn pop(self) -> (Self::Item, Self::Pop) {
+        let pair = self.0.pop();
+        (pair.0, At(pair.1))
+    }
 
-impl<T: Pop> Pop for At<T> {
-    type Item = T::Item;
-    type Output = T::Output;
-
-    fn pop(self) -> (Self::Item, Self::Output) {
-        self.0.pop()
+    fn clear(self) -> Self::Clear {
+        At(self.0.clear())
     }
 }
 
@@ -474,26 +474,6 @@ macro_rules! at {
                 Ok(($(self.0.$index.finalize((_states.0.$index, _states.1.own()))?,)*))
             }
         }
-
-        // impl<$($name: Parse,)*> Parse for ($($name,)*) {
-        //     type State = ($($name::State,)*);
-        //     type Value = ($($name::Value,)*);
-
-        //     #[inline]
-        //     fn initialize(&self, mut _state: State) -> Result<Self::State, Error> {
-        //         Ok(($(self.$index.initialize(_state.own())?,)*))
-        //     }
-
-        //     #[inline]
-        //     fn parse(&self, mut _states: (Self::State, State)) -> Result<Self::State, Error> {
-        //         Ok(($(self.$index.parse((_states.0.$index, _states.1.own()))?,)*))
-        //     }
-
-        //     #[inline]
-        //     fn finalize(&self, mut _states: (Self::State, State)) -> Result<Self::Value, Error> {
-        //         Ok(($(self.$index.finalize((_states.0.$index, _states.1.own()))?,)*))
-        //     }
-        // }
 
         impl<T $(, $name: Into<T>)*> Any<T> for ($(Option<$name>,)*) {
             #[inline]

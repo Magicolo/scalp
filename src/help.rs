@@ -8,7 +8,6 @@ use std::{
 use termion::style::{Bold, Faint, Italic, NoFaint, NoItalic, NoUnderline, Reset, Underline};
 
 const INDENT: usize = 2;
-const WIDTH: usize = 96;
 const OPEN: &str = "<";
 const CLOSE: &str = ">";
 const ASSIGN: &str = " = ";
@@ -16,6 +15,7 @@ const ASSIGN: &str = " = ";
 struct Helper<'a> {
     buffer: &'a mut String,
     indent: usize,
+    width: usize,
 }
 
 impl<'a> Helper<'a> {
@@ -30,6 +30,7 @@ impl<'a> Helper<'a> {
         Helper {
             buffer: self.buffer,
             indent: self.indent,
+            width: self.width,
         }
     }
 
@@ -47,9 +48,9 @@ impl<'a> Helper<'a> {
         self.space(self.indent)
     }
 
-    fn scope(
+    fn scope<T>(
         &mut self,
-        scope: impl FnOnce(Helper) -> Result<(), fmt::Error>,
+        scope: impl FnOnce(Helper) -> Result<T, fmt::Error>,
     ) -> Result<String, fmt::Error> {
         let buffer = take(self.buffer);
         scope(self.own())?;
@@ -60,9 +61,9 @@ impl<'a> Helper<'a> {
         &mut self,
         metas: &[Meta],
         prefix: &str,
-        position: usize,
-    ) -> Result<(bool, bool), fmt::Error> {
-        let mut has = (false, false);
+        position: &mut usize,
+    ) -> Result<bool, fmt::Error> {
+        let mut has = false;
         let mut join = false;
         let mut metas = metas.iter();
         let mut separate = |buffer: &mut String| {
@@ -79,12 +80,13 @@ impl<'a> Helper<'a> {
                 Meta::Name(value) => {
                     separate(self.buffer)?;
                     write!(self.buffer, "{value}")?;
-                    has.0 = true;
+                    has = true;
                 }
                 Meta::Position => {
                     separate(self.buffer)?;
                     write!(self.buffer, "[{position}]")?;
-                    has.1 = true;
+                    *position += 1;
+                    has = true;
                 }
                 Meta::Hide => hide(metas.by_ref()),
                 _ => {}
@@ -121,7 +123,6 @@ impl<'a> Helper<'a> {
         value: &str,
         prefix: &str,
         suffix: &str,
-        width: usize,
         cursor: &mut usize,
         join: &mut bool,
     ) -> Result<(), fmt::Error> {
@@ -135,7 +136,7 @@ impl<'a> Helper<'a> {
             }
 
             for word in line.split(' ') {
-                self.word(word, width, cursor)?;
+                self.word(word, cursor)?;
                 write!(self.buffer, " ")?;
             }
         }
@@ -146,8 +147,8 @@ impl<'a> Helper<'a> {
         Ok(())
     }
 
-    fn word(&mut self, word: &str, width: usize, cursor: &mut usize) -> Result<(), fmt::Error> {
-        if *cursor + word.len() > width {
+    fn word(&mut self, word: &str, cursor: &mut usize) -> Result<(), fmt::Error> {
+        if *cursor + word.len() > self.width - self.indent {
             writeln!(self.buffer)?;
             self.indentation()?;
             *cursor = 0;
@@ -157,13 +158,13 @@ impl<'a> Helper<'a> {
         Ok(())
     }
 
-    fn help(&mut self, metas: &[Meta], wrap: usize) -> Result<(), fmt::Error> {
+    fn help(&mut self, metas: &[Meta]) -> Result<(), fmt::Error> {
         let mut metas = metas.iter();
         let mut join = false;
         let mut cursor = 0;
         while let Some(meta) = metas.next() {
             match meta {
-                Meta::Help(value) => self.wrap(value, "", "", wrap, &mut cursor, &mut join)?,
+                Meta::Help(value) => self.wrap(value, "", "", &mut cursor, &mut join)?,
                 Meta::Hide => hide(metas.by_ref()),
                 _ => {}
             }
@@ -197,7 +198,7 @@ impl<'a> Helper<'a> {
         width
     }
 
-    fn tags(&mut self, metas: &[Meta]) -> Result<(), fmt::Error> {
+    fn tags(&mut self, metas: &[Meta]) -> Result<bool, fmt::Error> {
         let mut name = "";
         let mut many = false;
         let mut required = false;
@@ -218,7 +219,7 @@ impl<'a> Helper<'a> {
         }
 
         if name.is_empty() {
-            return Ok(());
+            return Ok(false);
         }
 
         write!(self.buffer, "{OPEN}")?;
@@ -253,10 +254,10 @@ impl<'a> Helper<'a> {
         }
         write!(self.buffer, "{CLOSE}")?;
 
-        Ok(())
+        Ok(true)
     }
 
-    fn node(&mut self, metas: &[Meta]) -> Result<(), fmt::Error> {
+    fn node(&mut self, metas: &[Meta], depth: usize) -> Result<(), fmt::Error> {
         let mut option = 0;
         let names = Self::name_width(metas, 1, &mut false);
         let mut helper = self.own();
@@ -265,7 +266,7 @@ impl<'a> Helper<'a> {
             match meta {
                 Meta::Help(value) => {
                     helper.indentation()?;
-                    helper.wrap(value, "", "", WIDTH, &mut 0, &mut false)?;
+                    helper.wrap(value, "", "", &mut 0, &mut false)?;
                     writeln!(helper.buffer)?;
                 }
                 Meta::Note(value) => {
@@ -274,7 +275,6 @@ impl<'a> Helper<'a> {
                         value,
                         Italic.as_ref(),
                         NoItalic.as_ref(),
-                        WIDTH,
                         &mut 0,
                         &mut false,
                     )?;
@@ -289,74 +289,68 @@ impl<'a> Helper<'a> {
                 Meta::Root(metas) => {
                     writeln!(helper.buffer)?;
                     helper.indentation()?;
-                    if let (true, _) = helper.names(metas, Bold.as_ref(), 0)? {
+                    if helper.names(metas, Bold.as_ref(), &mut 0)? {
                         helper.versions(metas, " ")?;
                         writeln!(helper.buffer, "{Reset}")?;
                     } else {
                         writeln!(helper.buffer)?;
                     }
-                    helper.node(metas)?;
+                    helper.node(metas, depth + 1)?;
                 }
                 Meta::Group(metas) => {
                     helper.indentation()?;
-                    if let (true, _) = helper.names(metas, Bold.as_ref(), 0)? {
+                    if helper.names(metas, Bold.as_ref(), &mut 0)? {
                         writeln!(helper.buffer, "{Reset}")?;
-                        helper.indent().node(metas)?;
+                        helper.indent().node(metas, depth + 1)?;
                         writeln!(helper.buffer)?;
                     } else {
-                        helper.node(metas)?;
+                        helper.node(metas, depth + 1)?;
                     }
                 }
-                Meta::Verb(metas) => helper.verb(metas, names)?,
-                Meta::Option(metas) => {
-                    if let (_, true) = helper.option(metas, option, names)? {
-                        option += 1;
+                Meta::Verb(metas) if depth == 0 => {
+                    writeln!(helper.buffer)?;
+                    helper.indentation()?;
+                    if helper.names(metas, Bold.as_ref(), &mut 0)? {
+                        helper.versions(metas, " ")?;
+                        writeln!(helper.buffer, "{Reset}")?;
+                    } else {
+                        writeln!(helper.buffer)?;
                     }
+                    helper.indent().node(metas, depth + 1)?;
+                }
+                Meta::Verb(metas) => {
+                    helper.indentation()?;
+                    let indent = names + INDENT;
+                    let start = helper.buffer.len();
+                    helper.names(metas, "", &mut 0)?;
+                    let width = helper.buffer.len().saturating_sub(start);
+                    helper.space(indent.saturating_sub(width))?;
+                    helper.indent_with(indent).help(metas)?;
+                    writeln!(helper.buffer)?;
+                }
+                Meta::Option(metas) => {
+                    helper.indentation()?;
+                    let indent = names + INDENT;
+                    let start = helper.buffer.len();
+                    helper.names(metas, "", &mut option)?;
+                    let width = helper.buffer.len().saturating_sub(start);
+                    helper.space(indent.saturating_sub(width))?;
+
+                    let mut helper = helper.indent_with(indent);
+                    let start = helper.buffer.len();
+                    helper.help(metas)?;
+                    let width = helper.buffer.len().saturating_sub(start);
+                    let buffer = helper.scope(|mut helper| helper.tags(metas))?;
+                    if width + buffer.len() > helper.width - helper.indent {
+                        writeln!(helper.buffer)?;
+                        helper.indentation()?;
+                    }
+                    writeln!(helper.buffer, "{Italic}{Faint}{buffer}{NoFaint}{NoItalic}")?;
                 }
                 Meta::Hide => hide(metas.by_ref()),
                 _ => {}
             }
         }
-        Ok(())
-    }
-
-    fn option(
-        &mut self,
-        metas: &[Meta],
-        position: usize,
-        names: usize,
-    ) -> Result<(bool, bool), fmt::Error> {
-        self.indentation()?;
-        let indent = names + INDENT;
-        let start = self.buffer.len();
-        let has = self.names(metas, "", position)?;
-        let width = self.buffer.len().saturating_sub(start);
-        self.space(indent.saturating_sub(width))?;
-
-        let mut helper = self.indent_with(indent);
-        let start = helper.buffer.len();
-        let wrap = WIDTH.saturating_sub(helper.indent);
-        helper.help(metas, wrap)?;
-        let width = helper.buffer.len().saturating_sub(start);
-        let buffer = helper.scope(|mut helper| helper.tags(metas))?;
-        if width + buffer.len() > WIDTH {
-            writeln!(helper.buffer)?;
-            helper.indentation()?;
-        }
-        writeln!(helper.buffer, "{Italic}{Faint}{buffer}{NoFaint}{NoItalic}")?;
-        Ok(has)
-    }
-
-    fn verb(&mut self, metas: &[Meta], names: usize) -> Result<(), fmt::Error> {
-        self.indentation()?;
-        let indent = names + INDENT;
-        let start = self.buffer.len();
-        self.names(metas, "", 0)?;
-        let width = self.buffer.len().saturating_sub(start);
-        self.space(indent.saturating_sub(width))?;
-        let wrap = WIDTH.saturating_sub(self.indent);
-        self.indent_with(indent).help(metas, wrap)?;
-        writeln!(self.buffer)?;
         Ok(())
     }
 }
@@ -366,8 +360,9 @@ pub(crate) fn help(meta: &Meta) -> Option<String> {
     let mut writer = Helper {
         buffer: &mut buffer,
         indent: 0,
+        width: term_size::dimensions().map_or(96, |pair| pair.0 - 16),
     };
-    writer.node(from_ref(meta)).ok()?;
+    writer.node(from_ref(meta), 0).ok()?;
     Some(buffer)
 }
 

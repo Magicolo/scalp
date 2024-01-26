@@ -9,7 +9,7 @@ fn verb_with_no_option_allows_for_root_options_before_and_after() -> Result<()> 
         .verb(|verb| verb.name("c"))
         .build()?
         .parse_with(["-a", "1", "c", "-b", "2"], [("", "")])?;
-    assert_eq!(result, (1, 2, Some(())));
+    assert_eq!(result, Some((1, 2, Some(()))));
     Ok(())
 }
 
@@ -20,10 +20,25 @@ fn boolean_option_swizzling() -> Result<()> {
         .option(|option| option.name("b").default(false))
         .option(|option| option.name("c").default(false))
         .build()?;
-    assert_eq!(parser.parse_with(["-a"], [("", "")])?, (true, false, false));
-    assert_eq!(parser.parse_with(["-ab"], [("", "")])?, (true, true, false));
-    assert_eq!(parser.parse_with(["-abc"], [("", "")])?, (true, true, true));
-    assert_eq!(parser.parse_with(["-ca"], [("", "")])?, (true, false, true));
-    assert_eq!(parser.parse_with(["-bca"], [("", "")])?, (true, true, true));
+    assert_eq!(
+        parser.parse_with(["-a"], [("", "")])?,
+        Some((true, false, false))
+    );
+    assert_eq!(
+        parser.parse_with(["-ab"], [("", "")])?,
+        Some((true, true, false))
+    );
+    assert_eq!(
+        parser.parse_with(["-abc"], [("", "")])?,
+        Some((true, true, true))
+    );
+    assert_eq!(
+        parser.parse_with(["-ca"], [("", "")])?,
+        Some((true, false, true))
+    );
+    assert_eq!(
+        parser.parse_with(["-bca"], [("", "")])?,
+        Some((true, true, true))
+    );
     Ok(())
 }
