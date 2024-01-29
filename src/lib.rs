@@ -60,8 +60,8 @@ pub enum Meta {
     Many(Option<usize>),
     Default(Cow<'static, str>),
     Environment(Cow<'static, str>),
-    Show, // TODO: Add Show?
-    Hide, // TODO: Add Show?
+    Show,
+    Hide,
     Root(Vec<Meta>),
     Option(Vec<Meta>),
     Options(Options),
@@ -164,7 +164,7 @@ const MAXIMUM: u32 = usize::BITS - 14;
 //             parse: Value(PhantomData),
 //         }
 //     }
-    
+
 //     pub fn option<T: FromStr + 'static>() -> impl Build<Scope = scope::Option, Parse = Value<T>> {
 //         Builder {
 //             scope: scope::Option::new(),

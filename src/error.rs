@@ -17,6 +17,7 @@ pub enum Error {
     DuplicateOptionValue,
     Anyhow(anyhow::Error),
     Format(fmt::Error),
+    Json(serde_json::Error),
     Other(Box<dyn error::Error + Send + Sync>),
 
     MissingRequiredValue,
@@ -78,6 +79,7 @@ impl fmt::Display for Error {
             }
             Error::Anyhow(error) => error.fmt(f)?,
             Error::Format(error) => error.fmt(f)?,
+            Error::Json(error) => error.fmt(f)?,
             Error::Other(error) => error.fmt(f)?,
 
             Error::MissingOptionValue => todo!(),
@@ -97,6 +99,12 @@ impl fmt::Display for Error {
 impl From<anyhow::Error> for Error {
     fn from(error: anyhow::Error) -> Self {
         Error::Anyhow(error)
+    }
+}
+
+impl From<serde_json::Error> for Error {
+    fn from(error: serde_json::Error) -> Self {
+        Error::Json(error)
     }
 }
 

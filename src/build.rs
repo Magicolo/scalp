@@ -416,7 +416,11 @@ impl<S: Scope, P> Builder<S, P> {
     }
 
     fn type_name<T: 'static>(mut self) -> Self {
-        let Some(name) = type_name::<T>().split("::").last() else {
+        let name = type_name::<T>();
+        let Some(name) = name.split('<').next() else {
+            return self;
+        };
+        let Some(name) = name.split(':').last() else {
             return self;
         };
         let identifier = TypeId::of::<T>();

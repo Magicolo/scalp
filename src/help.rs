@@ -281,9 +281,14 @@ impl<'a> Helper<'a> {
                     writeln!(helper.buffer)?;
                 }
                 Meta::Usage(value) => {
-                    writeln!(helper.buffer)?;
                     helper.indentation()?;
-                    writeln!(helper.buffer, "{Underline}{value}{NoUnderline}")?;
+                    helper.wrap(
+                        value,
+                        Underline.as_ref(),
+                        NoUnderline.as_ref(),
+                        &mut 0,
+                        &mut false,
+                    )?;
                     writeln!(helper.buffer)?;
                 }
                 Meta::Root(metas) => {

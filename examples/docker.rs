@@ -194,10 +194,12 @@ fn commands(builder: Builder<scope::Group>) -> Builder<scope::Group, impl Parse<
         .verb(|verb| verb.name("inspect").map(|_| Command::Inspect))
         .verb(|verb| verb
             .name("kill")
-            .usage("Usage:  docker kill [OPTIONS] CONTAINER [CONTAINER...]")
+            .help("")
+            .usage("Usage: docker kill [OPTIONS] CONTAINER [CONTAINER...]")
+            .help("")
             .help("Kill one or more running containers.")
             .help("")
-            .help("Aliases: docker container kill, docker kill")
+            .note("Aliases: docker container kill, docker kill")
             .help("")
             .option(|option| option
                 .name("s")
@@ -271,7 +273,9 @@ fn main() -> Result<(), Error> {
     let parser = Builder::new()
         .name("docker")
         .version(env!("CARGO_PKG_VERSION"))
+        .help("")
         .usage("Usage: docker [OPTIONS] COMMAND")
+        .help("")
         .help("A self-sufficient runtime for containers.")
         .help("")
         .group(|group| group
@@ -289,7 +293,7 @@ fn main() -> Result<(), Error> {
         .map(|(command, global)| Docker { command, global })
         .build()?;
     let arguments = [
-        "--config", "boba", "--debug", "false", "-H", "jango", "--host", "karl", "kill", "--help",
+        "--config", "boba", "--debug", "false", "-H", "jango", "--host", "karl", "kill",
     ];
     let environment = [("DOCKER_HOST", "fett")];
     let docker = parser.parse_with(arguments, environment)?.unwrap();
