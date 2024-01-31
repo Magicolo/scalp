@@ -1,4 +1,4 @@
-use crate::Meta;
+use crate::meta::Meta;
 use std::{
     borrow::Cow,
     fmt::{self, Write},

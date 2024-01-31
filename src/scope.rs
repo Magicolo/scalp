@@ -1,4 +1,4 @@
-use super::Meta;
+use crate::meta::Meta;
 use std::ops::{Deref, DerefMut};
 
 pub trait Scope: Into<Meta> + Extend<Meta> + DerefMut<Target = Vec<Meta>> {

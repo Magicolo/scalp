@@ -1,7 +1,6 @@
-use anyhow::anyhow;
 use core::fmt;
 use scalp::{scope, Builder, Error, Options, Parse};
-use std::{any::type_name, str::FromStr};
+use std::{any::type_name, num::NonZeroUsize, str::FromStr};
 
 pub struct Docker {
     pub global: GlobalOptions,
@@ -101,7 +100,7 @@ impl fmt::Display for LogLevel {
 }
 
 impl FromStr for LogLevel {
-    type Err = anyhow::Error;
+    type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
@@ -110,10 +109,7 @@ impl FromStr for LogLevel {
             "3" | "warn" => Ok(LogLevel::Warn),
             "4" | "error" => Ok(LogLevel::Error),
             "5" | "fatal" => Ok(LogLevel::Fatal),
-            _ => Err(anyhow!(
-                "Failed to parse '{s}' as a {}",
-                type_name::<Self>()
-            )),
+            _ => Err(format!("Failed to parse '{s}' as a {}", type_name::<Self>())),
         }
     }
 }
@@ -251,7 +247,7 @@ fn global_options(builder: Builder<scope::Group>) -> Builder<scope::Group, impl 
             .name("H")
             .name("host")
             .help("Daemon socket to connect to.")
-            .many(Some(1))
+            .many(Some(NonZeroUsize::MIN))
         )
         .option(|option| option
             .name("l")
@@ -284,7 +280,7 @@ fn main() -> Result<(), Error> {
             .group(swarm_commands)
             .group(commands)
             .any::<Command>()
-            .try_map(|command| Ok(command.ok_or(anyhow!("Missing command."))?))
+            .try_map(|command| Ok(command.ok_or("Missing command.")?))
         )
         .group(global_options)
         .help("Run 'docker COMMAND --help' for more information on a command.")

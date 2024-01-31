@@ -11,9 +11,6 @@ license = "MIT"
 [dependencies]
 termion = "*"
 term_size = "*"
-anyhow = "*"
-serde = { version = "*", features = ["derive"] }
-serde_json = "*"
 
 [workspace]
-members = ["scalp_core", "scalp_macro", "scalp_core"]
+members = ["scalp_core", "scalp_macro"]

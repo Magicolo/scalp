@@ -1,21 +1,19 @@
 use crate::{
     case::Case,
     error::Error,
+    meta::{Meta, Options},
     parse::{
         Any, At, Default, Environment, Indices, Many, Map, Node, Parse, Parser, Require, Value,
     },
     scope::{self, Scope},
     stack::Stack,
-    Meta, Options, BREAK, HELP, MAXIMUM, SHIFT, VERSION,
+    utility::short_type_name,
+    BREAK, HELP, MAXIMUM, SHIFT, VERSION,
 };
 use core::fmt;
 use std::{
-    any::{type_name, TypeId},
-    borrow::Cow,
-    collections::hash_map::Entry,
-    default,
-    marker::PhantomData,
-    str::FromStr,
+    any::TypeId, borrow::Cow, collections::hash_map::Entry, default, marker::PhantomData,
+    num::NonZeroUsize, str::FromStr,
 };
 
 pub struct Builder<S, P = At<()>> {
@@ -45,10 +43,12 @@ impl<S, P> Builder<S, P> {
         if let Some(true) = version {
             self.insert_version(metas, indices, true, true)?;
         }
-        if let None | Some(true) = help {
+        if let Some(true) = help {
             self.insert_help(metas, indices, true, true)?;
         }
-        Self::insert_key(self.long.clone(), indices, BREAK)?;
+        if version.is_some() || help.is_some() {
+            Self::insert_key(self.long.clone(), indices, BREAK)?;
+        }
         Ok(())
     }
 
@@ -71,7 +71,7 @@ impl<S, P> Builder<S, P> {
                         version = version.or(Some(true))
                     }
                 }
-                Some(Meta::Help(_) | Meta::Name(_) | Meta::Usage(_) | Meta::Note(_)) => {
+                Some(Meta::Help(_) | Meta::Usage(_) | Meta::Note(_)) => {
                     if hide == 0 {
                         help = help.or(Some(true))
                     }
@@ -137,14 +137,22 @@ impl<S, P> Builder<S, P> {
         indices: &mut Indices,
         index: usize,
     ) -> Result<(), Error> {
+        let mut has = false;
         for i in 0..metas.len() {
             match metas.get(i) {
-                Some(Meta::Name(name)) => Self::insert_key(name.clone(), indices, index)?,
+                Some(Meta::Name(name)) => {
+                    Self::insert_key(name.clone(), indices, index)?;
+                    has = true;
+                }
                 None => break,
                 _ => {}
             };
         }
-        Ok(())
+        if has {
+            Ok(())
+        } else {
+            Err(Error::MissingVerbName)
+        }
     }
 
     fn descend_option(
@@ -153,15 +161,26 @@ impl<S, P> Builder<S, P> {
         indices: &mut Indices,
         index: usize,
     ) -> Result<(), Error> {
+        let mut has = false;
         for i in 0..metas.len() {
             match metas.get(i) {
-                Some(Meta::Name(name)) => Self::insert_key(name.clone(), indices, index)?,
-                Some(Meta::Position) => indices.1.push(index),
+                Some(Meta::Name(name)) => {
+                    Self::insert_key(name.clone(), indices, index)?;
+                    has = true;
+                }
+                Some(Meta::Position) => {
+                    indices.1.push(index);
+                    has = true;
+                }
                 None => break,
                 _ => {}
             };
         }
-        Ok(())
+        if has {
+            Ok(())
+        } else {
+            Err(Error::MissingOptionNameOrPosition)
+        }
     }
 
     fn insert_version(
@@ -222,9 +241,7 @@ impl<S, P> Builder<S, P> {
         index: usize,
     ) -> Result<(), Error> {
         match indices.0.entry(key) {
-            Entry::Occupied(entry) => Err(Error::DuplicateName {
-                name: entry.key().clone(),
-            }),
+            Entry::Occupied(entry) => Err(Error::DuplicateName(entry.key().clone())),
             Entry::Vacant(entry) => {
                 entry.insert(index);
                 Ok(())
@@ -239,7 +256,7 @@ impl<S, P> Builder<S, P> {
         let mut outer = name.into();
         let name = outer.trim();
         match name.len() {
-            0 => return Err(Error::InvalidName { name: outer }),
+            0 => return Err(Error::InvalidName(outer)),
             1 => {
                 self.buffer.clear();
                 self.buffer.push_str(&self.short);
@@ -264,7 +281,7 @@ impl<S, P> Builder<S, P> {
         let mut outer = name.into();
         let name = outer.trim();
         match name.len() {
-            0 => return Err(Error::InvalidName { name: outer }),
+            0 => return Err(Error::InvalidName(outer)),
             1 => {
                 self.buffer.clear();
                 self.buffer.push_str(name);
@@ -416,13 +433,7 @@ impl<S: Scope, P> Builder<S, P> {
     }
 
     fn type_name<T: 'static>(mut self) -> Self {
-        let name = type_name::<T>();
-        let Some(name) = name.split('<').next() else {
-            return self;
-        };
-        let Some(name) = name.split(':').last() else {
-            return self;
-        };
+        let name = short_type_name::<T>();
         let identifier = TypeId::of::<T>();
         let name = if is!(identifier, bool) {
             Cow::Borrowed("boolean")
@@ -631,7 +642,7 @@ impl<P> Builder<scope::Option, P> {
 
     pub fn many<T, I: default::Default + Extend<T>>(
         self,
-        per: Option<usize>,
+        per: Option<NonZeroUsize>,
     ) -> Builder<scope::Option, Many<P, I>>
     where
         P: Parse<Value = Option<T>>,

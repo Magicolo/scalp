@@ -3,7 +3,8 @@ use crate::{
     help::{help, version},
     spell::Spell,
     stack::Stack,
-    Meta, BREAK, HELP, MASK, SHIFT, VERSION,
+    utility::short_type_name,
+    meta::Meta, BREAK, HELP, MASK, SHIFT, VERSION,
 };
 use std::{
     any::TypeId,
@@ -12,6 +13,7 @@ use std::{
     collections::{HashMap, VecDeque},
     default,
     marker::PhantomData,
+    num::NonZeroUsize,
     rc::Rc,
     str::FromStr,
     sync::Arc,
@@ -22,6 +24,7 @@ pub struct State<'a> {
     environment: &'a HashMap<Cow<'static, str>, Cow<'static, str>>,
     short: &'a str,
     long: &'a str,
+    key: Option<Cow<'static, str>>,
     index: usize,
 }
 
@@ -43,7 +46,7 @@ pub struct Map<P, F>(pub(crate) P, pub(crate) F);
 pub struct Value<T>(pub(crate) PhantomData<T>);
 pub struct Many<P, I>(
     pub(crate) P,
-    pub(crate) Option<usize>,
+    pub(crate) Option<NonZeroUsize>,
     pub(crate) PhantomData<I>,
 );
 pub struct Require<P>(pub(crate) P);
@@ -91,22 +94,26 @@ impl<'a> State<'a> {
             environment: self.environment,
             short: self.short,
             long: self.long,
+            key: None,
             index: self.index,
         }
     }
 
-    fn key(&mut self) -> Option<Cow<'static, str>> {
-        let Some(key) = self.arguments.pop_front() else {
+    fn key(&mut self) -> Option<&str> {
+        let Some(mut key) = self.arguments.pop_front() else {
             return None;
         };
-        if key.starts_with(self.short) && !key.starts_with(self.long) {
+        self.index = 0;
+        if key.len() > 2 && key.starts_with(self.short) && !key.starts_with(self.long) {
             for key in key.chars().skip(self.short.len() + 1) {
                 self.arguments
                     .push_front(Cow::Owned(format!("{}{key}", self.short)));
             }
+            key.to_mut().truncate(2);
+            Some(self.key.insert(key))
+        } else {
+            Some(self.key.insert(key))
         }
-        self.index = 0;
-        Some(key)
     }
 
     fn value<T: FromStr + 'static>(&mut self) -> Result<Option<T>, Error> {
@@ -118,18 +125,32 @@ impl<'a> State<'a> {
                     self.arguments.push_front(value);
                     Ok("true".parse().ok())
                 }
-                Err(_) => Err(Error::MissingOptionValue),
+                Err(_) => Err(self.missing_option::<T>()),
             },
             None if TypeId::of::<bool>() == TypeId::of::<T>() && self.index == 0 => {
                 self.index += 1;
                 Ok("true".parse().ok())
             }
-            None => Err(Error::MissingOptionValue),
+            None => Err(self.missing_option::<T>()),
         }
     }
 
-    fn restore(&mut self, key: Cow<'static, str>) {
-        self.arguments.push_front(key)
+    fn missing_option<T>(&self) -> Error {
+        Error::MissingOptionValue(self.key.clone(), short_type_name::<T>())
+    }
+
+    fn missing_required(&self) -> Error {
+        Error::MissingRequiredValue(self.key.clone())
+    }
+
+    fn duplicate_option(&self) -> Error {
+        Error::DuplicateOption(self.key.clone())
+    }
+
+    fn restore(&mut self) {
+        if let Some(key) = self.key.take() {
+            self.arguments.push_front(key)
+        }
     }
 
     #[allow(clippy::ptr_arg)]
@@ -140,6 +161,7 @@ impl<'a> State<'a> {
                 Err(_) => Err(Error::FailedToParseEnvironmentVariable {
                     key: key.clone(),
                     value: value.clone(),
+                    type_name: short_type_name::<T>(),
                 }),
             },
             None => Ok(None),
@@ -175,6 +197,7 @@ impl<P: Parse> Parser<P> {
             environment: &mut environment,
             short: &self.short,
             long: &self.long,
+            key: None,
             index: 0,
         };
         let states = (self.parse.initialize(state.own())?, state.own());
@@ -183,7 +206,7 @@ impl<P: Parse> Parser<P> {
         if arguments.is_empty() {
             Ok(value)
         } else {
-            Err(Error::ExcessArguments { arguments })
+            Err(Error::ExcessArguments(arguments))
         }
     }
 }
@@ -269,27 +292,24 @@ impl<P: Parse> Parse for Node<P> {
 
             let mut at = 0;
             while let Some(key) = states.1.key() {
-                match self.indices.0.get(&key).copied() {
+                match self.indices.0.get(key).copied() {
                     Some(HELP) => return Err(Error::Help(None)),
                     Some(VERSION) => return Err(Error::Version(None)),
                     Some(BREAK) => break,
                     Some(index) => state = self.parse.parse((state, states.1.with(index)))?,
                     None => match self.indices.1.get(at).copied() {
                         Some(index) => {
-                            states.1.restore(key);
+                            states.1.restore();
                             state = self.parse.parse((state, states.1.with(index)))?;
                             at += 1;
                         }
                         None => {
                             let suggestions = Spell::new().suggest(
-                                &key,
+                                key,
                                 self.indices.0.keys().cloned(),
                                 min(key.len() / 3, 3),
                             );
-                            return Err(Error::UnrecognizedArgument {
-                                argument: key,
-                                suggestions,
-                            });
+                            return Err(Error::UnrecognizedArgument(key.to_string(), suggestions));
                         }
                     },
                 };
@@ -298,7 +318,7 @@ impl<P: Parse> Parse for Node<P> {
         };
         match run() {
             Ok(values) => Ok(Some(values)),
-            Err(Error::Help(None)) => Err(Error::Help(help(&self.meta).map(Cow::Owned))),
+            Err(Error::Help(None)) => Err(Error::Help(help(&self.meta))),
             Err(Error::Version(None)) => Err(Error::Version(version(&self.meta, 1).cloned())),
             Err(error) => Err(error),
         }
@@ -338,10 +358,10 @@ impl<T, P: Parse<Value = Option<T>>> Parse for Require<P> {
         self.0.parse(states)
     }
 
-    fn finalize(&self, states: (Self::State, State)) -> Result<Self::Value, Error> {
-        match self.0.finalize(states)? {
+    fn finalize(&self, mut states: (Self::State, State)) -> Result<Self::Value, Error> {
+        match self.0.finalize((states.0, states.1.own()))? {
             Some(value) => Ok(value),
-            None => Err(Error::MissingRequiredValue),
+            None => Err(states.1.missing_required()),
         }
     }
 }
@@ -396,7 +416,7 @@ impl<T: FromStr + 'static> Parse for Value<T> {
 
     fn parse(&self, mut states: (Self::State, State)) -> Result<Self::State, Error> {
         match states.0 {
-            Some(_) => Err(Error::DuplicateOptionValue),
+            Some(_) => Err(states.1.duplicate_option()),
             None => states.1.value(),
         }
     }
@@ -417,7 +437,7 @@ impl<T, P: Parse<Value = Option<T>>, I: default::Default + Extend<T>> Parse for 
     fn parse(&self, mut states: (Self::State, State)) -> Result<Self::State, Error> {
         let mut items = states.0.unwrap_or_default();
         let mut index = 0;
-        let count = self.1.unwrap_or(usize::MAX);
+        let count = self.1.map_or(usize::MAX, NonZeroUsize::get);
         let error = loop {
             if index >= count {
                 break None;
@@ -440,7 +460,7 @@ impl<T, P: Parse<Value = Option<T>>, I: default::Default + Extend<T>> Parse for 
         };
         match (error, index) {
             (_, 1..) => Ok(Some(items)),
-            (None, 0) => Err(Error::MissingOptionValue),
+            (None, 0) => Err(states.1.missing_option::<T>()),
             (Some(error), 0) => Err(error),
         }
     }
@@ -464,7 +484,7 @@ macro_rules! at {
                 let index = _states.1.index;
                 match index & MASK {
                     $($index => _states.0.$index = self.0.$index.parse((_states.0.$index, _states.1.with(index >> SHIFT)))?,)*
-                    index => return Err(Error::InvalidIndex { index }),
+                    index => return Err(Error::InvalidIndex(index)),
                 };
                 #[allow(unreachable_code)]
                 Ok(_states.0)
