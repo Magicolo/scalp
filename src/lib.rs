@@ -15,6 +15,7 @@ pub use crate::{
     meta::Options,
     parse::{Parse, Parser},
     scope::Scope,
+    case::Case,
 };
 
 /*

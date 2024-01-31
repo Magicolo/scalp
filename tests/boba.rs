@@ -1,14 +1,7 @@
-# Scalp
-
-A declarative, macro-less parsing library for command-line interfaces. It provides a highly composable and extensible `Parse` trait that ensures comparative performance to a macro-full approach while offering greater flexibility and understandability. 
-
-*Less magic, more control, same speed.*
-
-## Getting Started
-```rust
 use scalp::{Builder, Case, Error};
 
-fn main() -> Result<(), Error> {
+#[test]
+fn boba() -> Result<(), Error> {
     #[derive(Debug, PartialEq, Eq)]
     enum Command {
         Run,
@@ -38,5 +31,3 @@ fn main() -> Result<(), Error> {
     assert!(root.debug);
     Ok(())
 }
-
-```

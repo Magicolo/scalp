@@ -1,10 +1,11 @@
 use crate::{
     error::Error,
     help::{help, version},
+    meta::Meta,
     spell::Spell,
     stack::Stack,
     utility::short_type_name,
-    meta::Meta, BREAK, HELP, MASK, SHIFT, VERSION,
+    BREAK, HELP, MASK, SHIFT, VERSION,
 };
 use std::{
     any::TypeId,
@@ -100,9 +101,7 @@ impl<'a> State<'a> {
     }
 
     fn key(&mut self) -> Option<&str> {
-        let Some(mut key) = self.arguments.pop_front() else {
-            return None;
-        };
+        let mut key = self.arguments.pop_front()?;
         self.index = 0;
         if key.len() > 2 && key.starts_with(self.short) && !key.starts_with(self.long) {
             for key in key.chars().skip(self.short.len() + 1) {
@@ -175,8 +174,8 @@ impl<'a> State<'a> {
     }
 }
 
-impl<P: Parse> Parser<P> {
-    pub fn parse(&mut self) -> Result<P::Value, Error> {
+impl<T, P: Parse<Value = Option<T>>> Parser<P> {
+    pub fn parse(&mut self) -> Result<T, Error> {
         self.parse_with(std::env::args(), std::env::vars())
     }
 
@@ -186,11 +185,16 @@ impl<P: Parse> Parser<P> {
         environment: impl IntoIterator<
             Item = (impl Into<Cow<'static, str>>, impl Into<Cow<'static, str>>),
         >,
-    ) -> Result<P::Value, Error> {
-        let mut arguments = arguments.into_iter().map(Into::into).collect();
+    ) -> Result<T, Error> {
+        let mut arguments = arguments
+            .into_iter()
+            .map(Into::into)
+            .filter(|argument| !argument.chars().all(char::is_whitespace))
+            .collect();
         let mut environment = environment
             .into_iter()
             .map(|(key, value)| (key.into(), value.into()))
+            .filter(|(key, _)| !key.chars().all(char::is_whitespace))
             .collect();
         let mut state = State {
             arguments: &mut arguments,
@@ -202,7 +206,7 @@ impl<P: Parse> Parser<P> {
         };
         let states = (self.parse.initialize(state.own())?, state.own());
         let states = (self.parse.parse(states)?, state.own());
-        let value = self.parse.finalize(states)?;
+        let value = self.parse.finalize(states)?.ok_or(Error::FailedToParse)?;
         if arguments.is_empty() {
             Ok(value)
         } else {

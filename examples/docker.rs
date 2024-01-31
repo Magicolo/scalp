@@ -292,7 +292,7 @@ fn main() -> Result<(), Error> {
         "--config", "boba", "--debug", "false", "-H", "jango", "--host", "karl", "kill",
     ];
     let environment = [("DOCKER_HOST", "fett")];
-    let docker = parser.parse_with(arguments, environment)?.unwrap();
+    let docker = parser.parse_with(arguments, environment)?;
     assert_eq!(docker.global.config, "boba".to_string());
     assert_eq!(docker.global.context, Some("fett".to_string()));
     assert!(!docker.global.debug);

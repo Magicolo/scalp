@@ -241,7 +241,7 @@ impl<S, P> Builder<S, P> {
         index: usize,
     ) -> Result<(), Error> {
         match indices.0.entry(key) {
-            Entry::Occupied(entry) => Err(Error::DuplicateName(entry.key().clone())),
+            Entry::Occupied(entry) => Err(Error::DuplicateName(entry.key().to_string())),
             Entry::Vacant(entry) => {
                 entry.insert(index);
                 Ok(())
@@ -256,7 +256,7 @@ impl<S, P> Builder<S, P> {
         let mut outer = name.into();
         let name = outer.trim();
         match name.len() {
-            0 => return Err(Error::InvalidName(outer)),
+            0 => return Err(Error::InvalidName(outer.to_string())),
             1 => {
                 self.buffer.clear();
                 self.buffer.push_str(&self.short);
@@ -281,7 +281,7 @@ impl<S, P> Builder<S, P> {
         let mut outer = name.into();
         let name = outer.trim();
         match name.len() {
-            0 => return Err(Error::InvalidName(outer)),
+            0 => return Err(Error::InvalidName(outer.to_string())),
             1 => {
                 self.buffer.clear();
                 self.buffer.push_str(name);
@@ -316,6 +316,17 @@ impl<S, P> Builder<S, P> {
         self.map_parse(|parse| Map(parse, map))
     }
 
+    pub fn or<T>(
+        self,
+        error: impl Into<Error>,
+    ) -> Builder<S, Map<P, impl Fn(P::Value) -> Result<T, Error>>>
+    where
+        P: Parse<Value = Option<T>>,
+    {
+        let error = error.into();
+        self.try_map(move |value| value.ok_or(error.clone()))
+    }
+
     pub fn boxed(self) -> Builder<S, Box<dyn Parse<Value = P::Value, State = P::State>>>
     where
         P: Parse + 'static,
@@ -329,6 +340,18 @@ impl<S, P> Builder<S, P> {
         P::Value: Any<T>,
     {
         self.map(Any::any)
+    }
+
+    pub fn any_or<T>(
+        self,
+        error: impl Into<Error>,
+    ) -> Builder<S, Map<P, impl Fn(P::Value) -> Result<T, Error>>>
+    where
+        P: Parse,
+        P::Value: Any<T>,
+    {
+        let error = error.into();
+        self.try_map(move |value| value.any().ok_or(error.clone()))
     }
 
     fn map_parse<Q>(self, map: impl FnOnce(P) -> Q) -> Builder<S, Q> {

@@ -1,5 +1,6 @@
 use std::{borrow::Cow, collections::VecDeque, error, fmt};
 
+#[derive(Clone)]
 pub enum Error {
     Help(Option<String>),
     Version(Option<Cow<'static, str>>),
@@ -8,10 +9,9 @@ pub enum Error {
     DuplicateOption(Option<Cow<'static, str>>),
     UnrecognizedArgument(String, Vec<(Cow<'static, str>, usize)>),
     ExcessArguments(VecDeque<Cow<'static, str>>),
-    DuplicateName(Cow<'static, str>),
+    DuplicateName(String),
     Format(fmt::Error),
     Text(Cow<'static, str>),
-    Box(Box<dyn error::Error + Send + Sync>),
 
     FailedToParseEnvironmentVariable {
         key: Cow<'static, str>,
@@ -21,10 +21,13 @@ pub enum Error {
     DuplicateNode,
     GroupNestingLimitOverflow,
     InvalidIndex(usize),
-    InvalidName(Cow<'static, str>),
+    InvalidName(String),
     MissingOptionNameOrPosition,
     MissingVerbName,
+    FailedToParse,
 }
+
+impl error::Error for Error {}
 
 impl fmt::Debug for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -79,7 +82,6 @@ impl fmt::Display for Error {
 
             Error::Format(error) => error.fmt(f)?,
             Error::Text(error) => error.fmt(f)?,
-            Error::Box(error) => error.fmt(f)?,
 
             Error::DuplicateName(name) => todo!(),
             Error::DuplicateNode => todo!(),
@@ -88,6 +90,7 @@ impl fmt::Display for Error {
             Error::InvalidName(name) => todo!(),
             Error::MissingOptionNameOrPosition => todo!(),
             Error::MissingVerbName => todo!(),
+            Error::FailedToParse => todo!(),
         }
         Ok(())
     }
@@ -96,12 +99,6 @@ impl fmt::Display for Error {
 impl From<fmt::Error> for Error {
     fn from(error: fmt::Error) -> Self {
         Error::Format(error)
-    }
-}
-
-impl From<Cow<'static, str>> for Error {
-    fn from(value: Cow<'static, str>) -> Self {
-        Error::Text(value)
     }
 }
 
@@ -117,10 +114,8 @@ impl From<String> for Error {
     }
 }
 
-impl<E: error::Error + Send + Sync + 'static> From<Box<E>> for Error {
-    fn from(error: Box<E>) -> Self {
-        Error::Box(error)
+impl From<Cow<'static, str>> for Error {
+    fn from(value: Cow<'static, str>) -> Self {
+        Error::Text(value)
     }
 }
-
-impl error::Error for Error {}
