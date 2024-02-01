@@ -73,4 +73,16 @@ impl Meta {
             Meta::Group(_) => Meta::Group(Vec::new()),
         }
     }
+
+    pub(crate) fn type_name(&self, depth: usize) -> Option<&Cow<'static, str>> {
+        match self {
+            Meta::Type(name, _) if depth == 0 => Some(name),
+            Meta::Root(metas) | Meta::Option(metas) | Meta::Verb(metas) | Meta::Group(metas)
+                if depth > 0 =>
+            {
+                metas.iter().find_map(|meta| meta.type_name(depth - 1))
+            }
+            _ => None,
+        }
+    }
 }

@@ -4,7 +4,6 @@ use crate::{
     meta::Meta,
     spell::Spell,
     stack::Stack,
-    utility::short_type_name,
     BREAK, HELP, MASK, SHIFT, VERSION,
 };
 use std::{
@@ -20,39 +19,66 @@ use std::{
     sync::Arc,
 };
 
+#[derive(Debug)]
 pub struct State<'a> {
     arguments: &'a mut VecDeque<Cow<'static, str>>,
     environment: &'a HashMap<Cow<'static, str>, Cow<'static, str>>,
     short: &'a str,
     long: &'a str,
-    key: Option<Cow<'static, str>>,
+    key: Option<&'a Cow<'static, str>>,
     index: usize,
+    meta: Option<&'a Meta>,
 }
 
+#[derive(Debug)]
 pub struct Parser<P> {
     pub(crate) short: Cow<'static, str>,
     pub(crate) long: Cow<'static, str>,
     pub(crate) parse: P,
 }
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub(crate) struct Indices(pub HashMap<Cow<'static, str>, usize>, pub Vec<usize>);
 
+#[derive(Debug)]
 pub struct Node<P> {
     pub(crate) indices: Indices,
     pub(crate) meta: Meta,
     pub(crate) parse: P,
 }
+
+#[derive(Debug)]
+pub struct With<P> {
+    pub(crate) meta: Meta,
+    pub(crate) parse: P,
+}
+
+#[derive(Debug)]
 pub struct Map<P, F>(pub(crate) P, pub(crate) F);
+
+#[derive(Debug)]
 pub struct Value<T>(pub(crate) PhantomData<T>);
+
+#[derive(Debug)]
+pub struct Function<F>(pub(crate) F);
+
+#[derive(Debug)]
 pub struct Many<P, I>(
     pub(crate) P,
     pub(crate) Option<NonZeroUsize>,
     pub(crate) PhantomData<I>,
 );
+
+#[derive(Debug)]
 pub struct Require<P>(pub(crate) P);
+
+#[derive(Debug)]
 pub struct Default<P, T>(pub(crate) P, pub(crate) T);
-pub struct Environment<P>(pub(crate) P, pub(crate) Cow<'static, str>);
+
+#[derive(Debug)]
+pub struct Environment<P, F>(pub(crate) P, pub(crate) Cow<'static, str>, pub(crate) F);
+
+#[derive(Debug)]
 pub struct At<P = ()>(pub(crate) P);
 
 pub trait Parse {
@@ -95,81 +121,56 @@ impl<'a> State<'a> {
             environment: self.environment,
             short: self.short,
             long: self.long,
-            key: None,
+            key: self.key,
             index: self.index,
+            meta: self.meta,
         }
     }
 
-    fn key(&mut self) -> Option<&str> {
+    fn key(&mut self) -> Option<Cow<'static, str>> {
         let mut key = self.arguments.pop_front()?;
         self.index = 0;
-        if key.len() > 2 && key.starts_with(self.short) && !key.starts_with(self.long) {
+        self.key = None;
+        if key.len() > self.short.len() + 1 && key.starts_with(self.short) && !key.starts_with(self.long) {
             for key in key.chars().skip(self.short.len() + 1) {
                 self.arguments
                     .push_front(Cow::Owned(format!("{}{key}", self.short)));
             }
             key.to_mut().truncate(2);
-            Some(self.key.insert(key))
-        } else {
-            Some(self.key.insert(key))
         }
+        Some(key)
     }
 
-    fn value<T: FromStr + 'static>(&mut self) -> Result<Option<T>, Error> {
-        match self.arguments.pop_front() {
-            Some(value) => match value.parse() {
-                Ok(value) => Ok(Some(value)),
-                Err(_) if TypeId::of::<bool>() == TypeId::of::<T>() && self.index == 0 => {
-                    self.index += 1;
-                    self.arguments.push_front(value);
-                    Ok("true".parse().ok())
-                }
-                Err(_) => Err(self.missing_option::<T>()),
-            },
-            None if TypeId::of::<bool>() == TypeId::of::<T>() && self.index == 0 => {
-                self.index += 1;
-                Ok("true".parse().ok())
-            }
-            None => Err(self.missing_option::<T>()),
-        }
-    }
-
-    fn missing_option<T>(&self) -> Error {
-        Error::MissingOptionValue(self.key.clone(), short_type_name::<T>())
+    fn missing_option(&self) -> Error {
+        Error::MissingOptionValue(self.type_name().cloned(), self.key.cloned())
     }
 
     fn missing_required(&self) -> Error {
-        Error::MissingRequiredValue(self.key.clone())
+        Error::MissingRequiredValue(self.key.cloned())
     }
 
     fn duplicate_option(&self) -> Error {
-        Error::DuplicateOption(self.key.clone())
+        Error::DuplicateOption(self.key.cloned())
     }
 
-    fn restore(&mut self) {
-        if let Some(key) = self.key.take() {
-            self.arguments.push_front(key)
-        }
+    fn restore(&mut self, key: Cow<'static, str>) {
+        self.arguments.push_front(key)
     }
 
-    #[allow(clippy::ptr_arg)]
-    fn variable<T: FromStr>(&self, key: &Cow<'static, str>) -> Result<Option<T>, Error> {
-        match self.environment.get(key) {
-            Some(value) => match value.parse() {
-                Ok(value) => Ok(Some(value)),
-                Err(_) => Err(Error::FailedToParseEnvironmentVariable {
-                    key: key.clone(),
-                    value: value.clone(),
-                    type_name: short_type_name::<T>(),
-                }),
-            },
-            None => Ok(None),
-        }
+    fn type_name(&self) -> Option<&Cow<'static, str>> {
+        self.meta.and_then(|meta| meta.type_name(1))
     }
 
-    fn with(&mut self, index: usize) -> State {
+    fn with<'b>(
+        &'b mut self,
+        meta: Option<&'b Meta>,
+        key: Option<&'b Cow<'static, str>>,
+        index: Option<usize>,
+    ) -> State<'b> {
         let mut state = self.own();
-        state.index = index;
+        state.meta = meta.or(state.meta);
+        state.key = key.or(state.key);
+        state.index = index.unwrap_or(state.index);
         state
     }
 }
@@ -179,12 +180,14 @@ impl<T, P: Parse<Value = Option<T>>> Parser<P> {
         self.parse_with(std::env::args(), std::env::vars())
     }
 
-    pub fn parse_with(
+    pub fn parse_with<
+        A: Into<Cow<'static, str>>,
+        K: Into<Cow<'static, str>>,
+        V: Into<Cow<'static, str>>,
+    >(
         &self,
-        arguments: impl IntoIterator<Item = impl Into<Cow<'static, str>>>,
-        environment: impl IntoIterator<
-            Item = (impl Into<Cow<'static, str>>, impl Into<Cow<'static, str>>),
-        >,
+        arguments: impl IntoIterator<Item = A>,
+        environment: impl IntoIterator<Item = (K, V)>,
     ) -> Result<T, Error> {
         let mut arguments = arguments
             .into_iter()
@@ -203,6 +206,7 @@ impl<T, P: Parse<Value = Option<T>>> Parser<P> {
             long: &self.long,
             key: None,
             index: 0,
+            meta: None,
         };
         let states = (self.parse.initialize(state.own())?, state.own());
         let states = (self.parse.parse(states)?, state.own());
@@ -275,6 +279,46 @@ impl<P: Parse + ?Sized> Parse for Arc<P> {
     }
 }
 
+impl<P: Parse + ?Sized> Parse for &P {
+    type State = P::State;
+    type Value = P::Value;
+
+    #[inline]
+    fn initialize(&self, state: State) -> Result<Self::State, Error> {
+        P::initialize(self, state)
+    }
+
+    #[inline]
+    fn parse(&self, states: (Self::State, State)) -> Result<Self::State, Error> {
+        P::parse(self, states)
+    }
+
+    #[inline]
+    fn finalize(&self, states: (Self::State, State)) -> Result<Self::Value, Error> {
+        P::finalize(self, states)
+    }
+}
+
+impl<P: Parse + ?Sized> Parse for &mut P {
+    type State = P::State;
+    type Value = P::Value;
+
+    #[inline]
+    fn initialize(&self, state: State) -> Result<Self::State, Error> {
+        P::initialize(self, state)
+    }
+
+    #[inline]
+    fn parse(&self, states: (Self::State, State)) -> Result<Self::State, Error> {
+        P::parse(self, states)
+    }
+
+    #[inline]
+    fn finalize(&self, states: (Self::State, State)) -> Result<Self::Value, Error> {
+        P::finalize(self, states)
+    }
+}
+
 impl<P: Parse> Parse for Node<P> {
     type State = Option<P::Value>;
     type Value = Option<P::Value>;
@@ -288,37 +332,46 @@ impl<P: Parse> Parse for Node<P> {
             return Err(Error::DuplicateNode);
         }
 
-        let run = || {
-            let mut state = self.parse.initialize(states.1.own())?;
+        let mut run = || {
+            let state = self.parse.initialize(states.1.own())?;
             if self.indices.0.is_empty() && self.indices.1.is_empty() {
                 return self.parse.finalize((state, states.1.own()));
             }
 
+            let mut states = (state, states.1.own());
             let mut at = 0;
             while let Some(key) = states.1.key() {
-                match self.indices.0.get(key).copied() {
+                match self.indices.0.get(&key).copied() {
                     Some(HELP) => return Err(Error::Help(None)),
                     Some(VERSION) => return Err(Error::Version(None)),
                     Some(BREAK) => break,
-                    Some(index) => state = self.parse.parse((state, states.1.with(index)))?,
+                    Some(index) => {
+                        states.0 = self.parse.parse((
+                            states.0,
+                            states.1.with(Some(&self.meta), Some(&key), Some(index)),
+                        ))?
+                    }
                     None => match self.indices.1.get(at).copied() {
                         Some(index) => {
-                            states.1.restore();
-                            state = self.parse.parse((state, states.1.with(index)))?;
+                            states.1.restore(key);
+                            states.0 = self.parse.parse((
+                                states.0,
+                                states.1.with(Some(&self.meta), None, Some(index)),
+                            ))?;
                             at += 1;
                         }
                         None => {
                             let suggestions = Spell::new().suggest(
-                                key,
+                                &key,
                                 self.indices.0.keys().cloned(),
                                 min(key.len() / 3, 3),
                             );
-                            return Err(Error::UnrecognizedArgument(key.to_string(), suggestions));
+                            return Err(Error::UnrecognizedArgument(key, suggestions));
                         }
                     },
                 };
             }
-            self.parse.finalize((state, states.1))
+            self.parse.finalize(states)
         };
         match run() {
             Ok(values) => Ok(Some(values)),
@@ -330,6 +383,37 @@ impl<P: Parse> Parse for Node<P> {
 
     fn finalize(&self, states: (Self::State, State)) -> Result<Self::Value, Error> {
         Ok(states.0)
+    }
+}
+
+impl<P: Parse> Parse for With<P> {
+    type State = P::State;
+    type Value = P::Value;
+
+    fn initialize(&self, mut state: State) -> Result<Self::State, Error> {
+        self.parse
+            .initialize(state.with(Some(&self.meta), None, None))
+            .map_err(|error| fill(error, &self.meta))
+    }
+
+    fn parse(&self, mut states: (Self::State, State)) -> Result<Self::State, Error> {
+        self.parse
+            .parse((states.0, states.1.with(Some(&self.meta), None, None)))
+            .map_err(|error| fill(error, &self.meta))
+    }
+
+    fn finalize(&self, mut states: (Self::State, State)) -> Result<Self::Value, Error> {
+        self.parse
+            .finalize((states.0, states.1.with(Some(&self.meta), None, None)))
+            .map_err(|error| fill(error, &self.meta))
+    }
+}
+
+fn fill(error: Error, meta: &Meta) -> Error {
+    match error {
+        Error::Help(None) => Error::Help(help(meta)),
+        Error::Version(None) => Error::Version(version(meta, 1).cloned()),
+        _ => error,
     }
 }
 
@@ -390,7 +474,7 @@ impl<T: Clone, P: Parse<Value = Option<T>>> Parse for Default<P, T> {
     }
 }
 
-impl<T: FromStr, P: Parse<Value = Option<T>>> Parse for Environment<P> {
+impl<T, F: Fn(&str) -> Option<T>, P: Parse<Value = Option<T>>> Parse for Environment<P, F> {
     type State = P::State;
     type Value = P::Value;
 
@@ -405,12 +489,40 @@ impl<T: FromStr, P: Parse<Value = Option<T>>> Parse for Environment<P> {
     fn finalize(&self, mut states: (Self::State, State)) -> Result<Self::Value, Error> {
         match self.0.finalize((states.0, states.1.own()))? {
             Some(value) => Ok(Some(value)),
-            None => states.1.variable(&self.1),
+            None => match states.1.environment.get(&self.1) {
+                Some(value) => match self.2(value) {
+                    Some(value) => Ok(Some(value)),
+                    None => Err(Error::FailedToParseEnvironmentVariable(
+                        self.1.clone(),
+                        value.clone(),
+                        states.1.type_name().cloned(),
+                        states.1.key.cloned(),
+                    )),
+                },
+                None => Ok(None),
+            },
         }
     }
 }
 
 impl<T: FromStr + 'static> Parse for Value<T> {
+    type State = Option<T>;
+    type Value = Option<T>;
+
+    fn initialize(&self, state: State) -> Result<Self::State, Error> {
+        Function(|value: &str| T::from_str(value).ok()).initialize(state)
+    }
+
+    fn parse(&self, states: (Self::State, State)) -> Result<Self::State, Error> {
+        Function(|value: &str| T::from_str(value).ok()).parse(states)
+    }
+
+    fn finalize(&self, states: (Self::State, State)) -> Result<Self::Value, Error> {
+        Function(|value: &str| T::from_str(value).ok()).finalize(states)
+    }
+}
+
+impl<T: 'static, F: Fn(&str) -> Option<T>> Parse for Function<F> {
     type State = Option<T>;
     type Value = Option<T>;
 
@@ -421,7 +533,26 @@ impl<T: FromStr + 'static> Parse for Value<T> {
     fn parse(&self, mut states: (Self::State, State)) -> Result<Self::State, Error> {
         match states.0 {
             Some(_) => Err(states.1.duplicate_option()),
-            None => states.1.value(),
+            None => match states.1.arguments.pop_front() {
+                Some(value) => match self.0(&value) {
+                    Some(value) => Ok(Some(value)),
+                    None if TypeId::of::<bool>() == TypeId::of::<T>() && states.1.index == 0 => {
+                        states.1.index += 1;
+                        states.1.arguments.push_front(value);
+                        Ok(self.0("true"))
+                    }
+                    None => Err(Error::FailedToParseOptionValue(
+                        value,
+                        states.1.type_name().cloned(),
+                        states.1.key.cloned(),
+                    )),
+                },
+                None if TypeId::of::<bool>() == TypeId::of::<T>() && states.1.index == 0 => {
+                    states.1.index += 1;
+                    Ok(self.0("true"))
+                }
+                None => Err(states.1.missing_option()),
+            },
         }
     }
 
@@ -464,7 +595,7 @@ impl<T, P: Parse<Value = Option<T>>, I: default::Default + Extend<T>> Parse for 
         };
         match (error, index) {
             (_, 1..) => Ok(Some(items)),
-            (None, 0) => Err(states.1.missing_option::<T>()),
+            (None, 0) => Err(states.1.missing_option()),
             (Some(error), 0) => Err(error),
         }
     }
@@ -487,7 +618,7 @@ macro_rules! at {
             fn parse(&self, mut _states: (Self::State, State)) -> Result<Self::State, Error> {
                 let index = _states.1.index;
                 match index & MASK {
-                    $($index => _states.0.$index = self.0.$index.parse((_states.0.$index, _states.1.with(index >> SHIFT)))?,)*
+                    $($index => _states.0.$index = self.0.$index.parse((_states.0.$index, _states.1.with(None, None, Some(index >> SHIFT))))?,)*
                     index => return Err(Error::InvalidIndex(index)),
                 };
                 #[allow(unreachable_code)]

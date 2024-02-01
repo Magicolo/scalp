@@ -7,15 +7,14 @@ mod parse;
 pub mod scope;
 mod spell;
 mod stack;
-mod utility;
 
 pub use crate::{
     build::Builder,
+    case::Case,
     error::Error,
     meta::Options,
     parse::{Parse, Parser},
     scope::Scope,
-    case::Case,
 };
 
 /*

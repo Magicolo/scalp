@@ -3,17 +3,22 @@ use crate::{
     error::Error,
     meta::{Meta, Options},
     parse::{
-        Any, At, Default, Environment, Indices, Many, Map, Node, Parse, Parser, Require, Value,
+        Any, At, Default, Environment, Function, Indices, Many, Map, Node, Parse, Parser, Require,
+        Value, With,
     },
     scope::{self, Scope},
     stack::Stack,
-    utility::short_type_name,
     BREAK, HELP, MAXIMUM, SHIFT, VERSION,
 };
 use core::fmt;
 use std::{
-    any::TypeId, borrow::Cow, collections::hash_map::Entry, default, marker::PhantomData,
-    num::NonZeroUsize, str::FromStr,
+    any::{type_name, TypeId},
+    borrow::Cow,
+    collections::hash_map::Entry,
+    default,
+    marker::PhantomData,
+    num::NonZeroUsize,
+    str::FromStr,
 };
 
 pub struct Builder<S, P = At<()>> {
@@ -32,24 +37,25 @@ impl default::Default for Builder<scope::Root> {
 }
 
 impl<S, P> Builder<S, P> {
-    fn descend(&mut self, meta: &mut Meta, indices: &mut Indices) -> Result<(), Error> {
+    fn descend(&mut self, meta: &mut Meta) -> Result<Indices, Error> {
+        let mut indices = Indices::default();
         let (version, help, metas) = match meta {
             Meta::Root(metas) | Meta::Option(metas) | Meta::Verb(metas) | Meta::Group(metas) => {
-                let pair = self.descend_node(metas, 0, 0, indices)?;
+                let pair = self.descend_node(metas, 0, 0, &mut indices)?;
                 (pair.0, pair.1, metas)
             }
-            _ => return Ok(()),
+            _ => return Ok(indices),
         };
         if let Some(true) = version {
-            self.insert_version(metas, indices, true, true)?;
+            self.insert_version(metas, &mut indices, true, true)?;
         }
         if let Some(true) = help {
-            self.insert_help(metas, indices, true, true)?;
+            self.insert_help(metas, &mut indices, true, true)?;
         }
         if version.is_some() || help.is_some() {
-            Self::insert_key(self.long.clone(), indices, BREAK)?;
+            Self::insert_key(self.long.clone(), &mut indices, BREAK)?;
         }
-        Ok(())
+        Ok(indices)
     }
 
     fn descend_node(
@@ -415,12 +421,6 @@ impl<S, P> Builder<S, P> {
     }
 }
 
-macro_rules! is {
-    ($left: expr $(, $rights: ident)+) => {
-        $($left == TypeId::of::<$rights>() || $left == TypeId::of::<Option<$rights>>() ||)+ false
-    };
-}
-
 impl<S: Scope, P> Builder<S, P> {
     pub fn help(self, help: impl Into<Cow<'static, str>>) -> Self {
         self.meta(Meta::Help(help.into()))
@@ -455,22 +455,31 @@ impl<S: Scope, P> Builder<S, P> {
         self.try_meta(Ok(meta))
     }
 
-    fn type_name<T: 'static>(mut self) -> Self {
-        let name = short_type_name::<T>();
-        let identifier = TypeId::of::<T>();
-        let name = if is!(identifier, bool) {
-            Cow::Borrowed("boolean")
-        } else if is!(identifier, u8, u16, u32, u64, u128, usize, i8, i16, i32, i64, i128, isize) {
-            Cow::Borrowed("integer")
-        } else if is!(identifier, f32, f64) {
-            Cow::Borrowed("number")
-        } else {
-            self.buffer.clear();
-            let Ok(_) = self.case.convert_in(name, &mut self.buffer) else {
-                return self;
+    fn type_name<T: 'static>(self) -> Self {
+        macro_rules! is {
+            ($left: expr $(, $rights: ident)+) => {
+                $($left == TypeId::of::<$rights>() || $left == TypeId::of::<Option<$rights>>() ||)+ false
             };
-            Cow::Owned(self.buffer.clone())
+        }
+
+        let name = type_name::<T>();
+        let identifier = TypeId::of::<T>();
+        let Some(name) = name.split('<').next() else {
+            return self;
         };
+        let Some(name) = name.split(':').last() else {
+            return self;
+        };
+        let name = if is!(identifier, bool) {
+            "boolean"
+        } else if is!(identifier, u8, u16, u32, u64, u128, usize, i8, i16, i32, i64, i128, isize) {
+            "integer"
+        } else if is!(identifier, f32, f64) {
+            "number"
+        } else {
+            name
+        };
+        let name = Cow::Owned(self.case.convert(name));
         self.meta(Meta::Type(name, identifier))
     }
 }
@@ -488,11 +497,9 @@ impl<S: scope::Parent, P> Builder<S, P> {
         P: Stack,
     {
         let (scope, old, group) = self.swap_both(scope::Group::new(), At(()));
-        let (scope, mut builder) = build(group)
-            .try_map_parse(|new| Ok(old?.push(new)))
-            .swap_scope(scope);
+        let (scope, mut builder) = build(group).swap_scope(scope);
         builder.scope.push(scope.into());
-        builder
+        builder.try_map_parse(|new| Ok(old?.push(new)))
     }
 
     pub fn verb<Q>(
@@ -504,15 +511,13 @@ impl<S: scope::Parent, P> Builder<S, P> {
     {
         let (scope, old, builder) = self.swap_both(scope::Verb::new(), At(()));
         let (verb, mut builder) = build(builder).swap_scope(scope);
-        let mut indices = Indices::default();
         let mut meta = Meta::from(verb);
-        let result = builder.descend(&mut meta, &mut indices);
+        let indices = builder.descend(&mut meta);
         builder.scope.push(meta.clone(1));
         builder.try_map_parse(|new| {
-            result?;
             Ok(old?.push(Node {
                 parse: new,
-                indices,
+                indices: indices?,
                 meta,
             }))
         })
@@ -521,16 +526,34 @@ impl<S: scope::Parent, P> Builder<S, P> {
     pub fn option<T: FromStr + 'static, Q>(
         self,
         build: impl FnOnce(Builder<scope::Option, Value<T>>) -> Builder<scope::Option, Q>,
-    ) -> Builder<S, P::Push<Q>>
+    ) -> Builder<S, P::Push<With<Q>>>
     where
         P: Stack,
     {
+        // TODO: Errors should be able to access the 'Meta::Type' associated with this option.
+        // 'State::with' doesn't seem to work because this is not a 'Node'.
         let (scope, old, option) = self.swap_both(scope::Option::new(), Value(PhantomData));
-        let (option, mut builder) = build(option.type_name::<T>())
-            .try_map_parse(|new| Ok(old?.push(new)))
-            .swap_scope(scope);
-        builder.scope.push(option.into());
-        builder
+        let (option, mut builder) = build(option.type_name::<T>()).swap_scope(scope);
+        let meta = Meta::from(option);
+        builder.scope.push(meta.clone(1));
+        builder.try_map_parse(|new| Ok(old?.push(With { meta, parse: new })))
+    }
+
+    pub fn option_with<T: 'static, F: Fn(&str) -> Option<T>, Q>(
+        self,
+        parse: F,
+        build: impl FnOnce(Builder<scope::Option, Function<F>>) -> Builder<scope::Option, Q>,
+    ) -> Builder<S, P::Push<With<Q>>>
+    where
+        P: Stack,
+    {
+        // TODO: Errors should be able to access the 'Meta::Type' associated with this option.
+        // 'State::with' doesn't seem to work because this is not a 'Node'.
+        let (scope, old, option) = self.swap_both(scope::Option::new(), Function(parse));
+        let (option, mut builder) = build(option.type_name::<T>()).swap_scope(scope);
+        let meta = Meta::from(option);
+        builder.scope.push(meta.clone(1));
+        builder.try_map_parse(|new| Ok(old?.push(With { meta, parse: new })))
     }
 
     pub fn options(self, options: impl IntoIterator<Item = Options>) -> Self {
@@ -581,15 +604,14 @@ impl<P> Builder<scope::Root, P> {
         P: Parse,
     {
         let (root, mut builder) = self.swap_scope(());
-        let mut indices = Indices::default();
         let mut meta = Meta::from(root);
-        builder.descend(&mut meta, &mut indices)?;
+        let indices = builder.descend(&mut meta);
         Ok(Parser {
             short: builder.short,
             long: builder.long,
             parse: Node {
-                indices,
                 meta,
+                indices: indices?,
                 parse: builder.parse?,
             },
         })
@@ -650,13 +672,24 @@ impl<P> Builder<scope::Option, P> {
     pub fn environment<T: FromStr>(
         self,
         variable: impl Into<Cow<'static, str>>,
-    ) -> Builder<scope::Option, Environment<P>>
+    ) -> Builder<scope::Option, Environment<P, impl Fn(&str) -> Option<T>>>
+    where
+        P: Parse<Value = Option<T>>,
+    {
+        self.environment_with(variable, |value| value.parse().ok())
+    }
+
+    pub fn environment_with<T, F: Fn(&str) -> Option<T>>(
+        self,
+        variable: impl Into<Cow<'static, str>>,
+        parse: F,
+    ) -> Builder<scope::Option, Environment<P, F>>
     where
         P: Parse<Value = Option<T>>,
     {
         let variable = variable.into();
         self.meta(Meta::Environment(variable.clone()))
-            .map_parse(|parse| Environment(parse, variable))
+            .map_parse(|inner| Environment(inner, variable, parse))
     }
 
     pub fn require(self) -> Builder<scope::Option, Require<P>> {

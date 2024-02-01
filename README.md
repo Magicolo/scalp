@@ -31,8 +31,6 @@ fn main() -> Result<(), Error> {
         .map(|(debug, command)| Root { debug, command })
         .build()?;
 
-    // Uses `std::env::args()` and `std::env::vars()` by default. See [`Parser::parse_with`]
-    // to provide arguments and environment variables manually.
     let root = parser.parse_with(["run", "-d"], [("", "")])?;
     assert_eq!(root.command, Command::Run);
     assert!(root.debug);

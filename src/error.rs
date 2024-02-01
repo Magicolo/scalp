@@ -4,20 +4,26 @@ use std::{borrow::Cow, collections::VecDeque, error, fmt};
 pub enum Error {
     Help(Option<String>),
     Version(Option<Cow<'static, str>>),
-    MissingOptionValue(Option<Cow<'static, str>>, &'static str),
+    MissingOptionValue(Option<Cow<'static, str>>, Option<Cow<'static, str>>),
     MissingRequiredValue(Option<Cow<'static, str>>),
     DuplicateOption(Option<Cow<'static, str>>),
-    UnrecognizedArgument(String, Vec<(Cow<'static, str>, usize)>),
+    UnrecognizedArgument(Cow<'static, str>, Vec<(Cow<'static, str>, usize)>),
     ExcessArguments(VecDeque<Cow<'static, str>>),
     DuplicateName(String),
     Format(fmt::Error),
     Text(Cow<'static, str>),
+    FailedToParseEnvironmentVariable(
+        Cow<'static, str>,
+        Cow<'static, str>,
+        Option<Cow<'static, str>>,
+        Option<Cow<'static, str>>,
+    ),
+    FailedToParseOptionValue(
+        Cow<'static, str>,
+        Option<Cow<'static, str>>,
+        Option<Cow<'static, str>>,
+    ),
 
-    FailedToParseEnvironmentVariable {
-        key: Cow<'static, str>,
-        value: Cow<'static, str>,
-        type_name: &'static str,
-    },
     DuplicateNode,
     GroupNestingLimitOverflow,
     InvalidIndex(usize),
@@ -68,17 +74,53 @@ impl fmt::Display for Error {
                 }
                 write!(f, "'.")?;
             }
-            Error::MissingOptionValue(None, value) => write!(f, "Missing value of type '{value}'.")?,
-            Error::MissingOptionValue(Some(key), value) => {
-                write!(f, "Missing value of type '{value}' for option '{key}'.")?
+            Error::MissingOptionValue(type_name, option) => {
+                write!(f, "Missing value")?;
+                if let Some(type_name) = type_name {
+                    write!(f, " of type '{type_name}'")?;
+                }
+                if let Some(option) = option {
+                    write!(f, " for option '{option}'")?;
+                }
+                write!(f, ".")?;
             }
-            Error::DuplicateOption(Some(key)) => write!(f, "Duplicate option '{key}'.")?,
-            Error::DuplicateOption(None) => write!(f, "Duplicate option.")?,
-            Error::MissingRequiredValue(Some(key)) => write!(f, "Missing required option '{key}'.")?,
-            Error::MissingRequiredValue(None) => write!(f, "Missing required option.")?,
-            Error::FailedToParseEnvironmentVariable { key, value, type_name } => {
-                write!(f, "Failed to parse environment variable '{key}' with value '{value}' as type '{type_name}'.")?
-            },
+            Error::DuplicateOption(key) => {
+                write!(f, "Duplicate option")?;
+                if let Some(key) = key {
+                    write!(f, " '{key}'")?;
+                }
+                write!(f, ".")?;
+            }
+            Error::MissingRequiredValue(key) => {
+                write!(f, "Missing required option")?;
+                if let Some(key) = key {
+                    write!(f, " '{key}'")?;
+                }
+                write!(f, ".")?;
+            }
+            Error::FailedToParseEnvironmentVariable(key, value, type_name, option) => {
+                write!(
+                    f,
+                    "Failed to parse environment variable '{key}' with value '{value}'"
+                )?;
+                if let Some(type_name) = type_name {
+                    write!(f, " as type '{type_name}'")?;
+                }
+                if let Some(option) = option {
+                    write!(f, " for option '{option}'")?;
+                }
+                write!(f, ".")?;
+            }
+            Error::FailedToParseOptionValue(value, type_name, option) => {
+                write!(f, "Failed to parse value '{value}'")?;
+                if let Some(type_name) = type_name {
+                    write!(f, " as type '{type_name}'")?;
+                }
+                if let Some(option) = option {
+                    write!(f, " for option '{option}'")?;
+                }
+                write!(f, ".")?;
+            }
 
             Error::Format(error) => error.fmt(f)?,
             Error::Text(error) => error.fmt(f)?,

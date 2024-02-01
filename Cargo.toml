@@ -16,7 +16,7 @@ term_size = "*"
 [dev-dependencies]
 criterion = "*"
 skeptic = "*"
-checkito = "*"
+checkito = "1.4.0"
 
 [build-dependencies]
 skeptic = "*"

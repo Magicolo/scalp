@@ -1,3 +1,4 @@
 /target
 expand.rs
 Cargo.lock
+examples/*.txt
