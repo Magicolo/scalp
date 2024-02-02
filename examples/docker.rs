@@ -1,6 +1,5 @@
-use core::fmt;
-use scalp::{scope, Builder, Error, Options, Parse};
-use std::{any::type_name, str::FromStr};
+use core::{any::type_name, fmt, str::FromStr};
+use scalp::*;
 
 pub struct Docker {
     pub global: GlobalOptions,

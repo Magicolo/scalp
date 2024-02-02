@@ -6,17 +6,10 @@ use crate::{
     stack::Stack,
     BREAK, HELP, MASK, SHIFT, VERSION,
 };
+use core::{any::TypeId, cmp::min, default, marker::PhantomData, num::NonZeroUsize, str::FromStr};
 use std::{
-    any::TypeId,
     borrow::Cow,
-    cmp::min,
     collections::{HashMap, VecDeque},
-    default,
-    marker::PhantomData,
-    num::NonZeroUsize,
-    rc::Rc,
-    str::FromStr,
-    sync::Arc,
 };
 
 #[derive(Debug)]
@@ -131,7 +124,10 @@ impl<'a> State<'a> {
         let mut key = self.arguments.pop_front()?;
         self.index = 0;
         self.key = None;
-        if key.len() > self.short.len() + 1 && key.starts_with(self.short) && !key.starts_with(self.long) {
+        if key.len() > self.short.len() + 1
+            && key.starts_with(self.short)
+            && !key.starts_with(self.long)
+        {
             for key in key.chars().skip(self.short.len() + 1) {
                 self.arguments
                     .push_front(Cow::Owned(format!("{}{key}", self.short)));
@@ -210,7 +206,10 @@ impl<T, P: Parse<Value = Option<T>>> Parser<P> {
         };
         let states = (self.parse.initialize(state.own())?, state.own());
         let states = (self.parse.parse(states)?, state.own());
-        let value = self.parse.finalize(states)?.ok_or(Error::FailedToParseArguments)?;
+        let value = self
+            .parse
+            .finalize(states)?
+            .ok_or(Error::FailedToParseArguments)?;
         if arguments.is_empty() {
             Ok(value)
         } else {
@@ -220,46 +219,6 @@ impl<T, P: Parse<Value = Option<T>>> Parser<P> {
 }
 
 impl<P: Parse + ?Sized> Parse for Box<P> {
-    type State = P::State;
-    type Value = P::Value;
-
-    #[inline]
-    fn initialize(&self, state: State) -> Result<Self::State, Error> {
-        P::initialize(self, state)
-    }
-
-    #[inline]
-    fn parse(&self, states: (Self::State, State)) -> Result<Self::State, Error> {
-        P::parse(self, states)
-    }
-
-    #[inline]
-    fn finalize(&self, states: (Self::State, State)) -> Result<Self::Value, Error> {
-        P::finalize(self, states)
-    }
-}
-
-impl<P: Parse + ?Sized> Parse for Rc<P> {
-    type State = P::State;
-    type Value = P::Value;
-
-    #[inline]
-    fn initialize(&self, state: State) -> Result<Self::State, Error> {
-        P::initialize(self, state)
-    }
-
-    #[inline]
-    fn parse(&self, states: (Self::State, State)) -> Result<Self::State, Error> {
-        P::parse(self, states)
-    }
-
-    #[inline]
-    fn finalize(&self, states: (Self::State, State)) -> Result<Self::Value, Error> {
-        P::finalize(self, states)
-    }
-}
-
-impl<P: Parse + ?Sized> Parse for Arc<P> {
     type State = P::State;
     type Value = P::Value;
 

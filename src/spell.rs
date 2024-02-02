@@ -1,4 +1,4 @@
-use std::{mem::swap, ops::Deref};
+use core::{mem::swap, ops::Deref};
 
 pub struct Spell(Vec<usize>, Vec<usize>);
 

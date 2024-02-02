@@ -10,16 +10,14 @@ use crate::{
     stack::Stack,
     BREAK, HELP, MAXIMUM, SHIFT, VERSION,
 };
-use core::fmt;
-use std::{
+use core::{
     any::{type_name, TypeId},
-    borrow::Cow,
-    collections::hash_map::Entry,
-    default,
+    default, fmt,
     marker::PhantomData,
     num::NonZeroUsize,
     str::FromStr,
 };
+use std::{borrow::Cow, collections::hash_map::Entry};
 
 pub struct Builder<S, P = At<()>> {
     case: Case,

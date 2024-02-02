@@ -1,10 +1,10 @@
 use crate::meta::Meta;
-use std::{
-    borrow::Cow,
+use core::{
     fmt::{self, Write},
     mem::{replace, take},
     slice::from_ref,
 };
+use std::borrow::Cow;
 use termion::style::{Bold, Faint, Italic, NoFaint, NoItalic, NoUnderline, Reset, Underline};
 
 const INDENT: usize = 2;

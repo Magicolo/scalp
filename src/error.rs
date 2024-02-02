@@ -1,4 +1,5 @@
-use std::{borrow::Cow, collections::VecDeque, error, fmt};
+use core::fmt;
+use std::{borrow::Cow, collections::VecDeque, error};
 
 #[derive(Clone)]
 pub enum Error {

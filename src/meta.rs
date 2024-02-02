@@ -1,4 +1,5 @@
-use std::{any::TypeId, borrow::Cow, num::NonZeroUsize};
+use core::{any::TypeId, num::NonZeroUsize};
+use std::borrow::Cow;
 
 #[derive(Debug)]
 pub enum Meta {

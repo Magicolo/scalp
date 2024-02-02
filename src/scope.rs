@@ -1,5 +1,5 @@
 use crate::meta::Meta;
-use std::ops::{Deref, DerefMut};
+use core::ops::{Deref, DerefMut};
 
 pub trait Scope: Into<Meta> + Extend<Meta> + DerefMut<Target = Vec<Meta>> {
     fn push(&mut self, meta: Meta) {
