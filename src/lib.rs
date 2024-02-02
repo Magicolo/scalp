@@ -19,7 +19,6 @@ pub use crate::{
 
 /*
     TODO:
-    - Finish implementing error formatting.
     - Could I use the same 'Parse' trait to generate an API?
     - Generate usage string automatically.
         - Usage: {verb (for root use the root name)} [position options (if any)] [named options (if any)] {sub-command (if any)}
