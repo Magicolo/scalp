@@ -283,16 +283,14 @@ impl<S, P> Builder<S, P> {
     ) -> Result<Cow<'static, str>, Error> {
         let mut outer = name.into();
         let name = outer.trim();
-        match name.len() {
-            0 => return Err(Error::InvalidName(outer.to_string())),
-            1 => {
-                self.buffer.clear();
-                self.buffer.push_str(name);
-            }
-            2.. => {
-                self.buffer.clear();
-                self.case.convert_in(name, &mut self.buffer)?;
-            }
+        if name.is_empty() {
+            return Err(Error::InvalidName(outer.to_string()));
+        } else if name.len() == 1 {
+            self.buffer.clear();
+            self.buffer.push_str(name);
+        } else {
+            self.buffer.clear();
+            self.case.convert_in(name, &mut self.buffer)?;
         }
         let inner = outer.to_mut();
         inner.clear();

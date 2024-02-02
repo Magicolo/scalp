@@ -552,10 +552,13 @@ impl<T, P: Parse<Value = Option<T>>, I: default::Default + Extend<T>> Parse for 
             items.extend([item]);
             index += 1;
         };
-        match (error, index) {
-            (_, 1..) => Ok(Some(items)),
-            (None, 0) => Err(states.1.missing_option()),
-            (Some(error), 0) => Err(error),
+        if index == 0 {
+            match error {
+                Some(error) => Err(error),
+                None => Err(states.1.missing_option()),
+            }
+        } else {
+            Ok(Some(items))
         }
     }
 

@@ -11,7 +11,7 @@ repository = "https://github.com/Magicolo/scalp"
 keywords = ["cli", "parse", "command-line-interface", "terminal", "pretty"]
 categories = ["command-line-interface", "command-line-utilities"]
 build = "build.rs"
-rust-version = "1.66.1"
+rust-version = "1.70.0"
 
 [dependencies]
 termion = "3.0.0"
