@@ -21,7 +21,7 @@ fn main() -> Result<(), Error> {
     }
 
     let parser = Builder::new()
-        .case(Case::Kebab)
+        .case(Case::Kebab { upper: false })
         .option(|option| option.name("debug").name("d").default(false))
         .group(|group| group
             .verb(|verb| verb.name("run").map(|_| Command::Run))
