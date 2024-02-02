@@ -1,9 +1,9 @@
 use checkito::*;
-use scalp::{Builder, Error};
+use scalp::{Builder, Case, Error};
 use std::{error, result};
 
 type Result = result::Result<(), Box<dyn error::Error>>;
-const COUNT: usize = 100;
+const COUNT: usize = 1000;
 
 #[test]
 fn empty_parser_builds() -> Result {
@@ -24,31 +24,51 @@ fn empty_parser_with_help_builds() -> Result {
 }
 
 #[test]
-fn missing_option_value() -> Result {
-    (("~", "_", "±", "@1", ";123").any().map(Unify::<&str>::unify), regex!("[a-zA-Z]")).check(COUNT, |(short, name)| {
+fn missing_option_value_with_short() -> Result {
+    (regex!("[~±@£¢¤¬¦²³¼½¾`^¯_]+"), regex!("[a-zA-Z]")).check(COUNT, |(short, name)| {
         let parser = Builder::new()
-            .short(*short)
+            .case(Case::Same)
+            .short(short.clone())
             .option::<usize, _>(|option| option.name(name.clone()))
             .build()
             .unwrap();
         let argument = format!("{short}{name}");
         let error = parser.parse_with([argument.clone()], [("", "")]).unwrap_err();
-        prove!(
-            matches!(error, Error::MissingOptionValue(type_name, option) if type_name == Some("integer".into()) && option == Some(argument.into()))
-        )
+        prove!(matches!(error, Error::MissingOptionValue(type_name, option) if type_name == Some("natural number".into()) && option == Some(argument.into())))
+    })?;
+    Ok(())
+}
+
+#[test]
+fn missing_option_value_with_long() -> Result {
+    (regex!("[~±@£¢¤¬¦²³¼½¾`^¯_]+"), regex!("[a-zA-Z]{2,}")).check(COUNT, |(long, name)| {
+        let parser = Builder::new()
+            .case(Case::Same)
+            .long(long.clone())
+            .option::<isize, _>(|option| option.name(name.clone()))
+            .build()
+            .unwrap();
+        let argument = format!("{long}{name}");
+        let error = parser.parse_with([argument.clone()], [("", "")]).unwrap_err();
+        prove!(matches!(error, Error::MissingOptionValue(type_name, option) if type_name == Some("integer number".into()) && option == Some(argument.into())))
     })?;
     Ok(())
 }
 
 #[test]
 fn fails_to_parse_invalid_value() -> Result {
-    let parser = Builder::new()
-        .option::<usize, _>(|option| option.name("a"))
-        .build()?;
-    let error = parser.parse_with(["-a", "-1"], [("", "")]).unwrap_err();
-    assert!(
-        matches!(error, Error::FailedToParseOptionValue(value, type_name, option) if value == "-1" && type_name == Some("integer".into()) && option == Some("-a".into()))
-    );
+    (regex!("[a-zA-Z]{2,}"), ..-1).check(COUNT, |(name, value)| {
+        let parser = Builder::new()
+            .case(Case::Same)
+            .option::<usize, _>(|option| option.name(name.clone()))
+            .build()
+            .unwrap();
+        let arguments = (format!("--{name}"), format!("{value}"));
+        let error = parser
+            .parse_with([arguments.0.clone(), arguments.1.clone()], [("", "")])
+            .unwrap_err();
+        prove!(matches!(error, Error::FailedToParseOptionValue(value, type_name, option) if value == arguments.1 && type_name == Some("natural number".into()) && option == Some(arguments.0.into())))
+    })?;
     Ok(())
 }
 

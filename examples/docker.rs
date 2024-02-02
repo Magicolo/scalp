@@ -1,6 +1,6 @@
 use core::fmt;
 use scalp::{scope, Builder, Error, Options, Parse};
-use std::{any::type_name, num::NonZeroUsize, str::FromStr};
+use std::{any::type_name, str::FromStr};
 
 pub struct Docker {
     pub global: GlobalOptions,
@@ -247,7 +247,7 @@ fn global_options(builder: Builder<scope::Group>) -> Builder<scope::Group, impl 
             .name("H")
             .name("host")
             .help("Daemon socket to connect to.")
-            .many(Some(NonZeroUsize::MIN))
+            .many()
         )
         .option(|option| option
             .name("l")

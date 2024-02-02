@@ -261,19 +261,18 @@ impl<S, P> Builder<S, P> {
     ) -> Result<Cow<'static, str>, Error> {
         let mut outer = name.into();
         let name = outer.trim();
-        match name.len() {
-            0 => return Err(Error::InvalidName(outer.to_string())),
-            1 => {
-                self.buffer.clear();
-                self.buffer.push_str(&self.short);
-                self.buffer.push_str(name);
-            }
-            2.. => {
-                self.buffer.clear();
-                self.buffer.push_str(&self.long);
-                self.case.convert_in(name, &mut self.buffer)?;
-            }
+        if name.is_empty() || !name.chars().all(|letter| letter.is_ascii_alphanumeric()) {
+            return Err(Error::InvalidName(outer.to_string()));
+        } else if name.len() == 1 {
+            self.buffer.clear();
+            self.buffer.push_str(&self.short);
+            self.buffer.push_str(name);
+        } else {
+            self.buffer.clear();
+            self.buffer.push_str(&self.long);
+            self.case.convert_in(name, &mut self.buffer)?;
         }
+
         let inner = outer.to_mut();
         inner.clear();
         inner.push_str(&self.buffer);
@@ -472,10 +471,12 @@ impl<S: Scope, P> Builder<S, P> {
         };
         let name = if is!(identifier, bool) {
             "boolean"
-        } else if is!(identifier, u8, u16, u32, u64, u128, usize, i8, i16, i32, i64, i128, isize) {
-            "integer"
+        } else if is!(identifier, u8, u16, u32, u64, u128, usize) {
+            "natural number"
+        } else if is!(identifier, i8, i16, i32, i64, i128, isize) {
+            "integer number"
         } else if is!(identifier, f32, f64) {
-            "number"
+            "rational number"
         } else {
             name
         };
@@ -573,7 +574,7 @@ impl<S: scope::Version, P> Builder<S, P> {
 impl Builder<scope::Root> {
     pub const fn new() -> Self {
         Self {
-            case: Case::Kebab,
+            case: Case::Kebab { upper: false },
             short: Cow::Borrowed("-"),
             long: Cow::Borrowed("--"),
             buffer: String::new(),
@@ -588,13 +589,29 @@ impl Builder<scope::Root> {
     }
 
     pub fn short(mut self, prefix: impl Into<Cow<'static, str>>) -> Self {
-        self.short = prefix.into();
-        self
+        let prefix = prefix.into();
+        if prefix.is_empty()
+            || self.long == prefix
+            || prefix.chars().any(|letter| letter.is_ascii_alphanumeric())
+        {
+            self.try_map_parse(|_| Err(Error::InvalidShortPrefix(prefix)))
+        } else {
+            self.short = prefix;
+            self
+        }
     }
 
     pub fn long(mut self, prefix: impl Into<Cow<'static, str>>) -> Self {
-        self.long = prefix.into();
-        self
+        let prefix = prefix.into();
+        if prefix.is_empty()
+            || self.short == prefix
+            || prefix.chars().any(|letter| letter.is_ascii_alphanumeric())
+        {
+            self.try_map_parse(|_| Err(Error::InvalidLongPrefix(prefix)))
+        } else {
+            self.long = prefix;
+            self
+        }
     }
 }
 
@@ -696,7 +713,14 @@ impl<P> Builder<scope::Option, P> {
         self.meta(Meta::Required).map_parse(Require)
     }
 
-    pub fn many<T, I: default::Default + Extend<T>>(
+    pub fn many<T, I: default::Default + Extend<T>>(self) -> Builder<scope::Option, Many<P, I>>
+    where
+        P: Parse<Value = Option<T>>,
+    {
+        self.many_with(Some(NonZeroUsize::MIN))
+    }
+
+    pub fn many_with<T, I: default::Default + Extend<T>>(
         self,
         per: Option<NonZeroUsize>,
     ) -> Builder<scope::Option, Many<P, I>>

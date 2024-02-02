@@ -8,10 +8,17 @@ pub enum Case {
     Upper,
     Pascal,
     Camel,
-    Snake,
-    Kebab,
-    UpperSnake,
-    UpperKebab,
+    Snake {
+        upper: bool,
+    },
+    Kebab {
+        upper: bool,
+    },
+    Separate {
+        separator: char,
+        upper: bool,
+    },
+    Other(fn(&str, &mut dyn Write) -> Result<(), fmt::Error>),
 }
 
 impl Case {
@@ -32,10 +39,10 @@ impl Case {
             Case::Upper => Self::upper_in(source, target),
             Case::Pascal => Self::pascal_in(source, target),
             Case::Camel => Self::camel_in(source, target),
-            Case::Snake => Self::snake_in(source, target),
-            Case::Kebab => Self::kebab_in(source, target),
-            Case::UpperSnake => Self::upper_snake_in(source, target),
-            Case::UpperKebab => Self::upper_kebab_in(source, target),
+            Case::Snake { upper } => Self::snake_in(source, target, *upper),
+            Case::Kebab { upper } => Self::kebab_in(source, target, *upper),
+            Case::Separate { separator, upper } => separate_in(source, target, *separator, !*upper),
+            Case::Other(convert) => convert(source, &mut target),
         }
     }
 
@@ -98,43 +105,23 @@ impl Case {
     }
 
     #[inline]
-    pub fn snake(source: &str) -> String {
-        separate(source, '_', true)
+    pub fn snake(source: &str, upper: bool) -> String {
+        separate(source, '_', !upper)
     }
 
     #[inline]
-    pub fn snake_in<W: Write>(source: &str, target: W) -> Result<(), fmt::Error> {
-        separate_in(source, target, '_', true)
+    pub fn snake_in<W: Write>(source: &str, target: W, upper: bool) -> Result<(), fmt::Error> {
+        separate_in(source, target, '_', !upper)
     }
 
     #[inline]
-    pub fn kebab(source: &str) -> String {
-        separate(source, '-', true)
+    pub fn kebab(source: &str, upper: bool) -> String {
+        separate(source, '-', !upper)
     }
 
     #[inline]
-    pub fn kebab_in<W: Write>(source: &str, target: W) -> Result<(), fmt::Error> {
-        separate_in(source, target, '-', true)
-    }
-
-    #[inline]
-    pub fn upper_snake(source: &str) -> String {
-        separate(source, '_', false)
-    }
-
-    #[inline]
-    pub fn upper_snake_in<W: Write>(source: &str, target: W) -> Result<(), fmt::Error> {
-        separate_in(source, target, '_', false)
-    }
-
-    #[inline]
-    pub fn upper_kebab(source: &str) -> String {
-        separate(source, '-', false)
-    }
-
-    #[inline]
-    pub fn upper_kebab_in<W: Write>(source: &str, target: W) -> Result<(), fmt::Error> {
-        separate_in(source, target, '-', false)
+    pub fn kebab_in<W: Write>(source: &str, target: W, upper: bool) -> Result<(), fmt::Error> {
+        separate_in(source, target, '-', !upper)
     }
 }
 
@@ -152,11 +139,7 @@ fn continuous(source: &str, first: bool) -> String {
     }
 }
 
-fn continuous_in<W: Write>(
-    source: &str,
-    mut target: W,
-    mut first: bool,
-) -> Result<(), fmt::Error> {
+fn continuous_in<W: Write>(source: &str, mut target: W, mut first: bool) -> Result<(), fmt::Error> {
     let mut upper = first;
     let mut last = true;
     for letter in source.chars() {
@@ -283,101 +266,96 @@ mod tests {
 
     #[test]
     fn snake() -> Result<(), fmt::Error> {
-        let convert = Case::snake;
-        assert_eq!(convert("BobaFett"), "boba_fett");
-        assert_eq!(convert("bobaFett"), "boba_fett");
-        assert_eq!(convert("boba fett"), "boba_fett");
-        assert_eq!(convert("BOBA-FETT"), "boba_fett");
-        assert_eq!(convert("BOBA"), "boba");
-        assert_eq!(convert("BOBA_FETT"), "boba_fett");
-        assert_eq!(convert("boba-fett"), "boba_fett");
-        assert_eq!(convert("_Boba_"), "boba");
-        assert_eq!(convert("_boba_"), "boba");
-        assert_eq!(convert("-Boba-"), "boba");
-        assert_eq!(convert("-boba-"), "boba");
-        assert_eq!(convert("1boba2fett"), "1boba2fett");
-        assert_eq!(convert("1boBa2FetT"), "1bo_ba2fet_t");
-        assert_eq!(convert("BObaFeTT"), "boba_fe_tt");
+        assert_eq!(Case::snake("BobaFett", false), "boba_fett");
+        assert_eq!(Case::snake("bobaFett", false), "boba_fett");
+        assert_eq!(Case::snake("boba fett", false), "boba_fett");
+        assert_eq!(Case::snake("BOBA-FETT", false), "boba_fett");
+        assert_eq!(Case::snake("BOBA", false), "boba");
+        assert_eq!(Case::snake("BOBA_FETT", false), "boba_fett");
+        assert_eq!(Case::snake("boba-fett", false), "boba_fett");
+        assert_eq!(Case::snake("_Boba_", false), "boba");
+        assert_eq!(Case::snake("_boba_", false), "boba");
+        assert_eq!(Case::snake("-Boba-", false), "boba");
+        assert_eq!(Case::snake("-boba-", false), "boba");
+        assert_eq!(Case::snake("1boba2fett", false), "1boba2fett");
+        assert_eq!(Case::snake("1boBa2FetT", false), "1bo_ba2fet_t");
+        assert_eq!(Case::snake("BObaFeTT", false), "boba_fe_tt");
         Ok(())
     }
 
     #[test]
     fn kebab() -> Result<(), fmt::Error> {
-        let convert = Case::kebab;
-        assert_eq!(convert("BobaFett"), "boba-fett");
-        assert_eq!(convert("bobaFett"), "boba-fett");
-        assert_eq!(convert("boba fett"), "boba-fett");
-        assert_eq!(convert("BOBA-FETT"), "boba-fett");
-        assert_eq!(convert("BOBA"), "boba");
-        assert_eq!(convert("BOBA_FETT"), "boba-fett");
-        assert_eq!(convert("boba-fett"), "boba-fett");
-        assert_eq!(convert("_Boba_"), "boba");
-        assert_eq!(convert("_boba_"), "boba");
-        assert_eq!(convert("-Boba-"), "boba");
-        assert_eq!(convert("-boba-"), "boba");
-        assert_eq!(convert("1boba2fett"), "1boba2fett");
-        assert_eq!(convert("1boBa2FetT"), "1bo-ba2fet-t");
-        assert_eq!(convert("BObaFeTT"), "boba-fe-tt");
+        assert_eq!(Case::kebab("BobaFett", false), "boba-fett");
+        assert_eq!(Case::kebab("bobaFett", false), "boba-fett");
+        assert_eq!(Case::kebab("boba fett", false), "boba-fett");
+        assert_eq!(Case::kebab("BOBA-FETT", false), "boba-fett");
+        assert_eq!(Case::kebab("BOBA", false), "boba");
+        assert_eq!(Case::kebab("BOBA_FETT", false), "boba-fett");
+        assert_eq!(Case::kebab("boba-fett", false), "boba-fett");
+        assert_eq!(Case::kebab("_Boba_", false), "boba");
+        assert_eq!(Case::kebab("_boba_", false), "boba");
+        assert_eq!(Case::kebab("-Boba-", false), "boba");
+        assert_eq!(Case::kebab("-boba-", false), "boba");
+        assert_eq!(Case::kebab("1boba2fett", false), "1boba2fett");
+        assert_eq!(Case::kebab("1boBa2FetT", false), "1bo-ba2fet-t");
+        assert_eq!(Case::kebab("BObaFeTT", false), "boba-fe-tt");
         Ok(())
     }
 
     #[test]
     fn upper() -> Result<(), fmt::Error> {
-        let convert = Case::upper;
-        assert_eq!(convert("BobaFett"), "BOBAFETT");
-        assert_eq!(convert("bobaFett"), "BOBAFETT");
-        assert_eq!(convert("boba fett"), "BOBAFETT");
-        assert_eq!(convert("BOBA-FETT"), "BOBAFETT");
-        assert_eq!(convert("BOBA"), "BOBA");
-        assert_eq!(convert("BOBA_FETT"), "BOBAFETT");
-        assert_eq!(convert("boba-fett"), "BOBAFETT");
-        assert_eq!(convert("_Boba_"), "BOBA");
-        assert_eq!(convert("_boba_"), "BOBA");
-        assert_eq!(convert("-Boba-"), "BOBA");
-        assert_eq!(convert("-boba-"), "BOBA");
-        assert_eq!(convert("1boba2fett"), "1BOBA2FETT");
-        assert_eq!(convert("1boBa2FetT"), "1BOBA2FETT");
-        assert_eq!(convert("BObaFeTT"), "BOBAFETT");
+        assert_eq!(Case::upper("BobaFett"), "BOBAFETT");
+        assert_eq!(Case::upper("bobaFett"), "BOBAFETT");
+        assert_eq!(Case::upper("boba fett"), "BOBAFETT");
+        assert_eq!(Case::upper("BOBA-FETT"), "BOBAFETT");
+        assert_eq!(Case::upper("BOBA"), "BOBA");
+        assert_eq!(Case::upper("BOBA_FETT"), "BOBAFETT");
+        assert_eq!(Case::upper("boba-fett"), "BOBAFETT");
+        assert_eq!(Case::upper("_Boba_"), "BOBA");
+        assert_eq!(Case::upper("_boba_"), "BOBA");
+        assert_eq!(Case::upper("-Boba-"), "BOBA");
+        assert_eq!(Case::upper("-boba-"), "BOBA");
+        assert_eq!(Case::upper("1boba2fett"), "1BOBA2FETT");
+        assert_eq!(Case::upper("1boBa2FetT"), "1BOBA2FETT");
+        assert_eq!(Case::upper("BObaFeTT"), "BOBAFETT");
         Ok(())
     }
 
     #[test]
     fn upper_snake() -> Result<(), fmt::Error> {
-        let convert = Case::upper_snake;
-        assert_eq!(convert("BobaFett"), "BOBA_FETT");
-        assert_eq!(convert("bobaFett"), "BOBA_FETT");
-        assert_eq!(convert("boba fett"), "BOBA_FETT");
-        assert_eq!(convert("BOBA-FETT"), "BOBA_FETT");
-        assert_eq!(convert("BOBA"), "BOBA");
-        assert_eq!(convert("BOBA_FETT"), "BOBA_FETT");
-        assert_eq!(convert("boba-fett"), "BOBA_FETT");
-        assert_eq!(convert("_Boba_"), "BOBA");
-        assert_eq!(convert("_boba_"), "BOBA");
-        assert_eq!(convert("-Boba-"), "BOBA");
-        assert_eq!(convert("-boba-"), "BOBA");
-        assert_eq!(convert("1boba2fett"), "1BOBA2FETT");
-        assert_eq!(convert("1boBa2FetT"), "1BO_BA2FET_T");
-        assert_eq!(convert("BObaFeTT"), "BOBA_FE_TT");
+        assert_eq!(Case::snake("BobaFett", true), "BOBA_FETT");
+        assert_eq!(Case::snake("bobaFett", true), "BOBA_FETT");
+        assert_eq!(Case::snake("boba fett", true), "BOBA_FETT");
+        assert_eq!(Case::snake("BOBA-FETT", true), "BOBA_FETT");
+        assert_eq!(Case::snake("BOBA", true), "BOBA");
+        assert_eq!(Case::snake("BOBA_FETT", true), "BOBA_FETT");
+        assert_eq!(Case::snake("boba-fett", true), "BOBA_FETT");
+        assert_eq!(Case::snake("_Boba_", true), "BOBA");
+        assert_eq!(Case::snake("_boba_", true), "BOBA");
+        assert_eq!(Case::snake("-Boba-", true), "BOBA");
+        assert_eq!(Case::snake("-boba-", true), "BOBA");
+        assert_eq!(Case::snake("1boba2fett", true), "1BOBA2FETT");
+        assert_eq!(Case::snake("1boBa2FetT", true), "1BO_BA2FET_T");
+        assert_eq!(Case::snake("BObaFeTT", true), "BOBA_FE_TT");
         Ok(())
     }
 
     #[test]
     fn upper_kebab() -> Result<(), fmt::Error> {
-        let convert = Case::upper_kebab;
-        assert_eq!(convert("BobaFett"), "BOBA-FETT");
-        assert_eq!(convert("bobaFett"), "BOBA-FETT");
-        assert_eq!(convert("boba fett"), "BOBA-FETT");
-        assert_eq!(convert("BOBA-FETT"), "BOBA-FETT");
-        assert_eq!(convert("BOBA"), "BOBA");
-        assert_eq!(convert("BOBA_FETT"), "BOBA-FETT");
-        assert_eq!(convert("boba-fett"), "BOBA-FETT");
-        assert_eq!(convert("_Boba_"), "BOBA");
-        assert_eq!(convert("_boba_"), "BOBA");
-        assert_eq!(convert("-Boba-"), "BOBA");
-        assert_eq!(convert("-boba-"), "BOBA");
-        assert_eq!(convert("1boba2fett"), "1BOBA2FETT");
-        assert_eq!(convert("1boBa2FetT"), "1BO-BA2FET-T");
-        assert_eq!(convert("BObaFeTT"), "BOBA-FE-TT");
+        assert_eq!(Case::kebab("BobaFett", true), "BOBA-FETT");
+        assert_eq!(Case::kebab("bobaFett", true), "BOBA-FETT");
+        assert_eq!(Case::kebab("boba fett", true), "BOBA-FETT");
+        assert_eq!(Case::kebab("BOBA-FETT", true), "BOBA-FETT");
+        assert_eq!(Case::kebab("BOBA", true), "BOBA");
+        assert_eq!(Case::kebab("BOBA_FETT", true), "BOBA-FETT");
+        assert_eq!(Case::kebab("boba-fett", true), "BOBA-FETT");
+        assert_eq!(Case::kebab("_Boba_", true), "BOBA");
+        assert_eq!(Case::kebab("_boba_", true), "BOBA");
+        assert_eq!(Case::kebab("-Boba-", true), "BOBA");
+        assert_eq!(Case::kebab("-boba-", true), "BOBA");
+        assert_eq!(Case::kebab("1boba2fett", true), "1BOBA2FETT");
+        assert_eq!(Case::kebab("1boBa2FetT", true), "1BO-BA2FET-T");
+        assert_eq!(Case::kebab("BObaFeTT", true), "BOBA-FE-TT");
         Ok(())
     }
 }

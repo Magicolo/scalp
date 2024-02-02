@@ -30,7 +30,9 @@ pub enum Error {
     InvalidName(String),
     MissingOptionNameOrPosition,
     MissingVerbName,
-    FailedToParse,
+    FailedToParseArguments,
+    InvalidShortPrefix(Cow<'static, str>),
+    InvalidLongPrefix(Cow<'static, str>),
 }
 
 impl error::Error for Error {}
@@ -121,18 +123,19 @@ impl fmt::Display for Error {
                 }
                 write!(f, ".")?;
             }
+            Error::InvalidShortPrefix(prefix) => write!(f, "Invalid short prefix '{prefix}'. A valid short prefix is non-empty, contains only non-alpha-numeric characters and differs from the long prefix.")?,
+            Error::InvalidLongPrefix(prefix) => write!(f, "Invalid long prefix '{prefix}'. A valid long prefix is non-empty, contains only non-alpha-numeric characters and differs from the short prefix.")?,
+            Error::DuplicateName(name) => write!(f, "Duplicate name '{name}'.")?,
+            Error::InvalidIndex(index) => write!(f, "Invalid index '{index}'.")?,
+            Error::InvalidName(name) => write!(f, "Invalid name '{name}'. A valid name is non-empty and contains only alpha-numeric characters.")?,
+            Error::DuplicateNode => write!(f, "Duplicate node.")?,
+            Error::GroupNestingLimitOverflow => write!(f, "Group nesting limit overflow.")?,
+            Error::MissingOptionNameOrPosition => write!(f, "Missing name or position for option.")?,
+            Error::MissingVerbName => write!(f, "Missing name for verb.")?,
+            Error::FailedToParseArguments => write!(f, "Failed to parse arguments.")?,
 
             Error::Format(error) => error.fmt(f)?,
             Error::Text(error) => error.fmt(f)?,
-
-            Error::DuplicateName(name) => todo!(),
-            Error::DuplicateNode => todo!(),
-            Error::GroupNestingLimitOverflow => todo!(),
-            Error::InvalidIndex(index) => todo!(),
-            Error::InvalidName(name) => todo!(),
-            Error::MissingOptionNameOrPosition => todo!(),
-            Error::MissingVerbName => todo!(),
-            Error::FailedToParse => todo!(),
         }
         Ok(())
     }

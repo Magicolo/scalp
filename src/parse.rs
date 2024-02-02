@@ -210,7 +210,7 @@ impl<T, P: Parse<Value = Option<T>>> Parser<P> {
         };
         let states = (self.parse.initialize(state.own())?, state.own());
         let states = (self.parse.parse(states)?, state.own());
-        let value = self.parse.finalize(states)?.ok_or(Error::FailedToParse)?;
+        let value = self.parse.finalize(states)?.ok_or(Error::FailedToParseArguments)?;
         if arguments.is_empty() {
             Ok(value)
         } else {
