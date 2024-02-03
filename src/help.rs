@@ -4,13 +4,11 @@ use core::{
     mem::{replace, take},
     slice::from_ref,
 };
-use std::borrow::Cow;
+use std::{borrow::Cow, fs, ops::Deref};
 use termion::style::{Bold, Faint, Italic, NoFaint, NoItalic, NoUnderline, Reset, Underline};
 
-const INDENT: usize = 2;
-const OPEN: &str = "<";
-const CLOSE: &str = ">";
-const ASSIGN: &str = " = ";
+const INDENTATION: &str = "  ";
+const INDENT: usize = INDENTATION.len();
 
 struct Helper<'a> {
     buffer: &'a mut String,
@@ -60,59 +58,59 @@ impl<'a> Helper<'a> {
     fn names(
         &mut self,
         metas: &[Meta],
-        prefix: &str,
+        prefix: impl fmt::Display,
         position: &mut usize,
     ) -> Result<bool, fmt::Error> {
-        let mut has = false;
-        let mut join = false;
-        let mut metas = metas.iter();
-        let mut separate = |buffer: &mut String| {
-            if join {
-                write!(buffer, ", ")?;
-            } else {
-                join = true;
-                write!(buffer, "{prefix}")?;
+        self.join(metas, prefix, ", ", |meta| match meta {
+            Meta::Name(value) => Some(Cow::Borrowed(value)),
+            Meta::Position => {
+                let value = format!("[{position}]");
+                *position += 1;
+                Some(Cow::Owned(value))
             }
-            Ok::<_, fmt::Error>(())
-        };
-        while let Some(meta) = metas.next() {
-            match meta {
-                Meta::Name(value) => {
-                    separate(self.buffer)?;
-                    write!(self.buffer, "{value}")?;
-                    has = true;
-                }
-                Meta::Position => {
-                    separate(self.buffer)?;
-                    write!(self.buffer, "[{position}]")?;
-                    *position += 1;
-                    has = true;
-                }
-                Meta::Hide => hide(metas.by_ref()),
-                _ => {}
-            }
-        }
-        Ok(has)
+            _ => None,
+        })
     }
 
-    fn versions(&mut self, metas: &[Meta], prefix: &str) -> Result<bool, fmt::Error> {
+    fn versions(&mut self, metas: &[Meta], prefix: impl fmt::Display) -> Result<bool, fmt::Error> {
+        self.join(metas, prefix, ", ", |meta| match meta {
+            Meta::Version(value) => Some(Cow::Borrowed(value)),
+            _ => None,
+        })
+    }
+
+    fn authors(&mut self, metas: &[Meta], prefix: impl fmt::Display) -> Result<bool, fmt::Error> {
+        self.join(metas, prefix, ", ", |meta| match meta {
+            Meta::Author(value) => Some(Cow::Borrowed(value)),
+            _ => None,
+        })
+    }
+
+    fn join(
+        &mut self,
+        metas: &[Meta],
+        prefix: impl fmt::Display,
+        separator: impl fmt::Display,
+        mut find: impl FnMut(&Meta) -> Option<Cow<str>>,
+    ) -> Result<bool, fmt::Error> {
         let mut join = false;
         let mut has = false;
         let mut metas = metas.iter();
         while let Some(meta) = metas.next() {
             match meta {
-                Meta::Version(value) => {
-                    if join {
-                        write!(self.buffer, ", ")?;
-                    } else {
-                        join = true;
-                        write!(self.buffer, "{prefix}")?;
-                    }
-                    write!(self.buffer, "{value}")?;
-                    has = true;
-                }
                 Meta::Hide => hide(metas.by_ref()),
-                _ => {}
+                meta => {
+                    if let Some(value) = find(meta) {
+                        if join {
+                            write!(self.buffer, "{separator}")?;
+                        } else {
+                            join = true;
+                            write!(self.buffer, "{prefix}")?;
+                        }
+                        write!(self.buffer, "{value}")?;
+                        has = true;
+                    }
+                }
             }
         }
         Ok(has)
@@ -164,7 +162,9 @@ impl<'a> Helper<'a> {
         let mut cursor = 0;
         while let Some(meta) = metas.next() {
             match meta {
-                Meta::Help(value) => self.wrap(value, "", "", &mut cursor, &mut join)?,
+                Meta::Help(value) if !value.chars().all(char::is_whitespace) => {
+                    self.wrap(value, "", "", &mut cursor, &mut join)?
+                }
                 Meta::Hide => hide(metas.by_ref()),
                 _ => {}
             }
@@ -222,7 +222,7 @@ impl<'a> Helper<'a> {
             return Ok(false);
         }
 
-        write!(self.buffer, "{OPEN}")?;
+        write!(self.buffer, "<")?;
         if required {
             write!(self.buffer, "required ")?;
         }
@@ -230,29 +230,13 @@ impl<'a> Helper<'a> {
         if many {
             write!(self.buffer, " list")?;
         }
-        let mut join = false;
-        let mut separate = |buffer: &mut String| {
-            if join {
-                write!(buffer, ", ")
-            } else {
-                join = true;
-                write!(buffer, "{ASSIGN}")
-            }
-        };
-        for meta in metas {
-            match meta {
-                Meta::Default(value) => {
-                    separate(self.buffer)?;
-                    write!(self.buffer, "{value}")?;
-                }
-                Meta::Environment(value) => {
-                    separate(self.buffer)?;
-                    write!(self.buffer, "${value}")?;
-                }
-                _ => {}
-            }
-        }
-        write!(self.buffer, "{CLOSE}")?;
+
+        self.join(metas, " = ", ", ", |meta| match meta {
+            Meta::Default(value) => Some(Cow::Borrowed(value)),
+            Meta::Environment(value) => Some(Cow::Borrowed(value)),
+            _ => None,
+        })?;
+        write!(self.buffer, ">")?;
 
         Ok(true)
     }
@@ -294,17 +278,20 @@ impl<'a> Helper<'a> {
                 Meta::Root(metas) => {
                     writeln!(helper.buffer)?;
                     helper.indentation()?;
-                    if helper.names(metas, Bold.as_ref(), &mut 0)? {
+                    if helper.names(metas, format_args!("{Underline}{Bold}"), &mut 0)? {
+                        write!(helper.buffer, "{Reset}{Underline}")?;
                         helper.versions(metas, " ")?;
-                        writeln!(helper.buffer, "{Reset}")?;
-                    } else {
-                        writeln!(helper.buffer)?;
+                        write!(helper.buffer, "{NoUnderline}")?;
+                        if helper.authors(metas, format_args!("{Italic}{Faint} by "))? {
+                            write!(helper.buffer, "{NoFaint}{NoItalic}")?;
+                        }
                     }
+                    writeln!(helper.buffer)?;
                     helper.node(metas, depth + 1)?;
                 }
                 Meta::Group(metas) => {
                     helper.indentation()?;
-                    if helper.names(metas, Bold.as_ref(), &mut 0)? {
+                    if helper.names(metas, format_args!("{Bold}"), &mut 0)? {
                         writeln!(helper.buffer, "{Reset}")?;
                         helper.indent().node(metas, depth + 1)?;
                         writeln!(helper.buffer)?;
@@ -315,7 +302,7 @@ impl<'a> Helper<'a> {
                 Meta::Verb(metas) if depth == 0 => {
                     writeln!(helper.buffer)?;
                     helper.indentation()?;
-                    if helper.names(metas, Bold.as_ref(), &mut 0)? {
+                    if helper.names(metas, format_args!("{Bold}"), &mut 0)? {
                         helper.versions(metas, " ")?;
                         writeln!(helper.buffer, "{Reset}")?;
                     } else {
@@ -365,22 +352,64 @@ pub(crate) fn help(meta: &Meta) -> Option<String> {
     let mut writer = Helper {
         buffer: &mut buffer,
         indent: 0,
-        width: term_size::dimensions().map_or(96, |pair| pair.0 - 16),
+        width: term_size::dimensions().map_or(96, |pair| pair.0 - 25),
     };
     writer.node(from_ref(meta), 0).ok()?;
     Some(buffer)
 }
 
-pub(crate) fn version(meta: &Meta, depth: usize) -> Option<&Cow<'static, str>> {
-    match meta {
-        Meta::Version(version) => Some(version),
-        Meta::Root(metas) | Meta::Option(metas) | Meta::Verb(metas) | Meta::Group(metas)
-            if depth > 0 =>
-        {
-            metas.iter().find_map(|meta| version(meta, depth - 1))
-        }
+pub(crate) fn version(meta: &Meta, depth: usize) -> Option<String> {
+    join(meta, depth, |meta| match meta {
+        Meta::Version(version) => Some(Cow::Borrowed(version)),
         _ => None,
+    })
+}
+
+pub(crate) fn license(meta: &Meta, depth: usize) -> Option<String> {
+    join(meta, depth, |meta| match meta {
+        Meta::License(name, file) => match fs::read_to_string(file.deref()) {
+            Ok(content) => Some(Cow::Owned(content)),
+            Err(_) if file.chars().all(char::is_whitespace) => Some(Cow::Borrowed(name)),
+            Err(_) => Some(Cow::Borrowed(file)),
+        },
+        _ => None,
+    })
+}
+
+pub(crate) fn author(meta: &Meta, depth: usize) -> Option<String> {
+    join(meta, depth, |meta| match meta {
+        Meta::Author(author) => Some(Cow::Borrowed(author)),
+        _ => None,
+    })
+}
+
+fn join(meta: &Meta, depth: usize, find: impl Fn(&Meta) -> Option<Cow<str>>) -> Option<String> {
+    fn descend(
+        meta: &Meta,
+        depth: usize,
+        buffer: &mut String,
+        find: impl Fn(&Meta) -> Option<Cow<str>> + Copy,
+    ) -> Result<(), fmt::Error> {
+        match meta {
+            Meta::Root(metas) | Meta::Option(metas) | Meta::Verb(metas) | Meta::Group(metas)
+                if depth > 0 =>
+            {
+                for meta in metas {
+                    descend(meta, depth - 1, buffer, find)?;
+                }
+            }
+            meta => match find(meta) {
+                Some(value) if buffer.is_empty() => write!(buffer, "{value}")?,
+                Some(value) => write!(buffer, ", {value}")?,
+                None => {}
+            },
+        }
+        Ok(())
     }
+
+    let mut buffer = String::new();
+    descend(meta, depth, &mut buffer, &find).ok()?;
+    Some(buffer)
 }
 
 fn hide<'a>(metas: impl Iterator<Item = &'a Meta>) {

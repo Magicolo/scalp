@@ -8,7 +8,7 @@ use crate::{
     },
     scope::{self, Scope},
     stack::Stack,
-    BREAK, HELP, MAXIMUM, SHIFT, VERSION,
+    AUTHOR, BREAK, HELP, LICENSE, MAXIMUM, SHIFT, VERSION,
 };
 use core::{
     any::{type_name, TypeId},
@@ -35,12 +35,16 @@ impl default::Default for Builder<scope::Root> {
 }
 
 impl<S, P> Builder<S, P> {
+    pub fn pipe<Q>(self, pipe: impl FnOnce(Self) -> Builder<S, Q>) -> Builder<S, Q> {
+        pipe(self)
+    }
+
     fn descend(&mut self, meta: &mut Meta) -> Result<Indices, Error> {
         let mut indices = Indices::default();
         let (version, help, metas) = match meta {
             Meta::Root(metas) | Meta::Option(metas) | Meta::Verb(metas) | Meta::Group(metas) => {
-                let pair = self.descend_node(metas, 0, 0, &mut indices)?;
-                (pair.0, pair.1, metas)
+                let tuple = self.descend_node(metas, 0, 0, &mut indices)?;
+                (tuple.0, tuple.1, metas)
             }
             _ => return Ok(indices),
         };
@@ -100,25 +104,29 @@ impl<S, P> Builder<S, P> {
                     return Err(Error::GroupNestingLimitOverflow)
                 }
                 Some(Meta::Group(metas)) => {
-                    let pair = self.descend_node(metas, value, shift + SHIFT, indices)?;
-                    version = match (version, pair.0) {
-                        (None, None) => None,
-                        (None, Some(right)) => Some(right),
-                        (Some(left), None) => Some(left),
-                        (Some(left), Some(right)) => Some(left && right),
-                    };
-                    help = match (help, pair.0) {
-                        (None, None) => None,
-                        (None, Some(right)) => Some(right),
-                        (Some(left), None) => Some(left),
-                        (Some(left), Some(right)) => Some(left && right),
-                    };
+                    let tuple = self.descend_node(metas, value, shift + SHIFT, indices)?;
+                    version = merge(version, tuple.0, |left, right| left && right);
+                    help = merge(help, tuple.1, |left, right| left && right);
                     index += 1;
                 }
                 Some(Meta::Options(Options::Version { short, long })) => {
                     let (short, long) = (*short, *long);
                     self.insert_version(metas, indices, short, long)?;
                     version = Some(false);
+                    if hide == 0 {
+                        help = help.or(Some(true))
+                    }
+                }
+                Some(Meta::Options(Options::License { short, long })) => {
+                    let (short, long) = (*short, *long);
+                    self.insert_license(metas, indices, short, long)?;
+                    if hide == 0 {
+                        help = help.or(Some(true))
+                    }
+                }
+                Some(Meta::Options(Options::Author { short, long })) => {
+                    let (short, long) = (*short, *long);
+                    self.insert_author(metas, indices, short, long)?;
                     if hide == 0 {
                         help = help.or(Some(true))
                     }
@@ -194,23 +202,48 @@ impl<S, P> Builder<S, P> {
         short: bool,
         long: bool,
     ) -> Result<(), Error> {
-        let mut option = vec![Meta::Help(Cow::Borrowed("Displays version information."))];
-        if short {
-            let name = self.option_name("v")?;
-            if Self::insert_key(name.clone(), indices, VERSION).is_ok() {
-                option.push(Meta::Name(name));
-            }
-        }
-        if long {
-            let name = self.option_name("version")?;
-            if Self::insert_key(name.clone(), indices, VERSION).is_ok() {
-                option.push(Meta::Name(name));
-            }
-        }
-        if option.len() > 1 {
-            metas.push(Meta::Option(option));
-        }
-        Ok(())
+        self.insert_option(
+            metas,
+            indices,
+            if short { Some("v") } else { None },
+            if long { Some("version") } else { None },
+            "Displays version information.",
+            VERSION,
+        )
+    }
+
+    fn insert_license(
+        &mut self,
+        metas: &mut Vec<Meta>,
+        indices: &mut Indices,
+        short: bool,
+        long: bool,
+    ) -> Result<(), Error> {
+        self.insert_option(
+            metas,
+            indices,
+            if short { Some("l") } else { None },
+            if long { Some("license") } else { None },
+            "Displays license information.",
+            LICENSE,
+        )
+    }
+
+    fn insert_author(
+        &mut self,
+        metas: &mut Vec<Meta>,
+        indices: &mut Indices,
+        short: bool,
+        long: bool,
+    ) -> Result<(), Error> {
+        self.insert_option(
+            metas,
+            indices,
+            if short { Some("a") } else { None },
+            if long { Some("author") } else { None },
+            "Displays author information.",
+            AUTHOR,
+        )
     }
 
     fn insert_help(
@@ -220,16 +253,35 @@ impl<S, P> Builder<S, P> {
         short: bool,
         long: bool,
     ) -> Result<(), Error> {
-        let mut option = vec![Meta::Help(Cow::Borrowed("Displays this help message."))];
-        if short {
-            let name = self.option_name("h")?;
-            if Self::insert_key(name.clone(), indices, HELP).is_ok() {
+        self.insert_option(
+            metas,
+            indices,
+            if short { Some("h") } else { None },
+            if long { Some("help") } else { None },
+            "Displays this help message.",
+            HELP,
+        )
+    }
+
+    fn insert_option(
+        &mut self,
+        metas: &mut Vec<Meta>,
+        indices: &mut Indices,
+        short: Option<&'static str>,
+        long: Option<&'static str>,
+        help: &'static str,
+        index: usize,
+    ) -> Result<(), Error> {
+        let mut option = vec![Meta::Help(Cow::Borrowed(help))];
+        if let Some(short) = short {
+            let name = self.option_name(short)?;
+            if Self::insert_key(name.clone(), indices, index).is_ok() {
                 option.push(Meta::Name(name));
             }
         }
-        if long {
-            let name = self.option_name("help")?;
-            if Self::insert_key(name.clone(), indices, HELP).is_ok() {
+        if let Some(long) = long {
+            let name = self.option_name(long)?;
+            if Self::insert_key(name.clone(), indices, index).is_ok() {
                 option.push(Meta::Name(name));
             }
         }
@@ -259,7 +311,7 @@ impl<S, P> Builder<S, P> {
     ) -> Result<Cow<'static, str>, Error> {
         let mut outer = name.into();
         let name = outer.trim();
-        if name.is_empty() || !name.chars().all(|letter| letter.is_ascii_alphanumeric()) {
+        if name.is_empty() || !name.chars().all(|letter| letter.is_ascii()) {
             return Err(Error::InvalidName(outer.to_string()));
         } else if name.len() == 1 {
             self.buffer.clear();
@@ -283,7 +335,7 @@ impl<S, P> Builder<S, P> {
     ) -> Result<Cow<'static, str>, Error> {
         let mut outer = name.into();
         let name = outer.trim();
-        if name.is_empty() {
+        if name.is_empty() || !name.chars().all(|letter| letter.is_ascii()) {
             return Err(Error::InvalidName(outer.to_string()));
         } else if name.len() == 1 {
             self.buffer.clear();
@@ -421,8 +473,13 @@ impl<S: Scope, P> Builder<S, P> {
         self.meta(Meta::Help(help.into()))
     }
 
-    pub fn note(self, help: impl Into<Cow<'static, str>>) -> Self {
-        self.meta(Meta::Note(help.into()))
+    pub fn note(self, note: impl Into<Cow<'static, str>>) -> Self {
+        let note = note.into();
+        if note.chars().all(char::is_whitespace) {
+            self
+        } else {
+            self.meta(Meta::Note(note))
+        }
     }
 
     pub fn hide(self) -> Self {
@@ -482,8 +539,13 @@ impl<S: Scope, P> Builder<S, P> {
 }
 
 impl<S: scope::Parent, P> Builder<S, P> {
-    pub fn usage(self, help: impl Into<Cow<'static, str>>) -> Self {
-        self.meta(Meta::Usage(help.into()))
+    pub fn usage(self, usage: impl Into<Cow<'static, str>>) -> Self {
+        let usage = usage.into();
+        if usage.chars().all(char::is_whitespace) {
+            self
+        } else {
+            self.meta(Meta::Usage(usage))
+        }
     }
 
     pub fn group<Q>(
@@ -631,27 +693,70 @@ impl<P> Builder<scope::Root, P> {
     }
 
     pub fn name(self, name: impl Into<Cow<'static, str>>) -> Self {
-        self.meta(Meta::Name(name.into()))
+        let name = name.into();
+        if name.chars().all(char::is_whitespace) {
+            self
+        } else {
+            self.meta(Meta::Name(name))
+        }
+    }
+
+    pub fn license(
+        self,
+        name: impl Into<Cow<'static, str>>,
+        file: impl Into<Cow<'static, str>>,
+    ) -> Self {
+        let name = name.into();
+        let content = file.into();
+        if name.chars().all(char::is_whitespace) && content.chars().all(char::is_whitespace) {
+            self
+        } else {
+            self.meta(Meta::License(name, content))
+        }
+    }
+
+    pub fn author(self, author: impl Into<Cow<'static, str>>) -> Self {
+        let author = author.into();
+        if author.chars().all(char::is_whitespace) {
+            self
+        } else {
+            self.meta(Meta::Author(author))
+        }
     }
 }
 
 impl<P> Builder<scope::Group, P> {
     pub fn name(self, name: impl Into<Cow<'static, str>>) -> Self {
-        self.meta(Meta::Name(name.into()))
+        let name = name.into();
+        if name.chars().all(char::is_whitespace) {
+            self
+        } else {
+            self.meta(Meta::Name(name))
+        }
     }
 }
 
 impl<P> Builder<scope::Verb, P> {
     pub fn name(mut self, name: impl Into<Cow<'static, str>>) -> Self {
-        let meta = self.verb_name(name).map(Meta::Name);
-        self.try_meta(meta)
+        let name = name.into();
+        if name.chars().all(char::is_whitespace) {
+            self
+        } else {
+            let meta = self.verb_name(name).map(Meta::Name);
+            self.try_meta(meta)
+        }
     }
 }
 
 impl<P> Builder<scope::Option, P> {
     pub fn name(mut self, name: impl Into<Cow<'static, str>>) -> Self {
-        let meta = self.option_name(name).map(Meta::Name);
-        self.try_meta(meta)
+        let name = name.into();
+        if name.chars().all(char::is_whitespace) {
+            self
+        } else {
+            let meta = self.option_name(name).map(Meta::Name);
+            self.try_meta(meta)
+        }
     }
 
     pub fn position(self) -> Self {
@@ -725,5 +830,14 @@ impl<P> Builder<scope::Option, P> {
     {
         self.meta(Meta::Many(per))
             .map_parse(|parse| Many(parse, per, PhantomData))
+    }
+}
+
+fn merge<T>(left: Option<T>, right: Option<T>, merge: impl FnOnce(T, T) -> T) -> Option<T> {
+    match (left, right) {
+        (None, None) => None,
+        (None, Some(right)) => Some(right),
+        (Some(left), None) => Some(left),
+        (Some(left), Some(right)) => Some(merge(left, right)),
     }
 }

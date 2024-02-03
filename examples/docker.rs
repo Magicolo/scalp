@@ -254,7 +254,7 @@ fn global_options(builder: Builder<scope::Group>) -> Builder<scope::Group, impl 
             .help("Set the logging level.")
             .default(LogLevel::Info)
         )
-        .options([Options::version(true, true), Options::help(true, true)])
+        .options(Options::all(true, true))
         .map(|(config, context, debug, host, log_level)| GlobalOptions {
             config,
             context,
@@ -266,8 +266,8 @@ fn global_options(builder: Builder<scope::Group>) -> Builder<scope::Group, impl 
 
 fn main() -> Result<(), Error> {
     let parser = Builder::new()
-        .name("docker")
-        .version(env!("CARGO_PKG_VERSION"))
+        .name(env!("CARGO_BIN_NAME").trim())
+        .version(env!("CARGO_PKG_VERSION").trim())
         .help("")
         .usage("Usage: docker [OPTIONS] COMMAND")
         .help("")
@@ -288,7 +288,7 @@ fn main() -> Result<(), Error> {
         .map(|(command, global)| Docker { command, global })
         .build()?;
     let arguments = [
-        "--config", "boba", "--debug", "false", "-H", "jango", "--host", "karl", "kill",
+        "--help", "--config", "boba", "--debug", "false", "-H", "jango", "--host", "karl", "kill",
     ];
     let environment = [("DOCKER_HOST", "fett")];
     let docker = parser.parse_with(arguments, environment)?;

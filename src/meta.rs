@@ -6,6 +6,8 @@ pub enum Meta {
     Name(Cow<'static, str>),
     Position,
     Version(Cow<'static, str>),
+    License(Cow<'static, str>, Cow<'static, str>),
+    Author(Cow<'static, str>),
     Help(Cow<'static, str>),
     Usage(Cow<'static, str>),
     Note(Cow<'static, str>),
@@ -25,17 +27,37 @@ pub enum Meta {
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum Options {
+    Author { short: bool, long: bool },
+    License { short: bool, long: bool },
     Version { short: bool, long: bool },
     Help { short: bool, long: bool },
 }
 
 impl Options {
+    pub fn all(short: bool, long: bool) -> impl Iterator<Item = Options> {
+        [
+            Options::Author { short, long },
+            Options::License { short, long },
+            Options::Version { short, long },
+            Options::Help { short, long },
+        ]
+        .into_iter()
+    }
+
     pub const fn version(short: bool, long: bool) -> Self {
         Self::Version { short, long }
     }
 
     pub const fn help(short: bool, long: bool) -> Self {
         Self::Help { short, long }
+    }
+
+    pub const fn author(short: bool, long: bool) -> Self {
+        Self::Author { short, long }
+    }
+
+    pub const fn license(short: bool, long: bool) -> Self {
+        Self::License { short, long }
     }
 }
 
@@ -45,6 +67,8 @@ impl Meta {
             Meta::Name(value) => Meta::Name(value.clone()),
             Meta::Position => Meta::Position,
             Meta::Version(value) => Meta::Version(value.clone()),
+            Meta::License(name, content) => Meta::License(name.clone(), content.clone()),
+            Meta::Author(value) => Meta::Author(value.clone()),
             Meta::Help(value) => Meta::Help(value.clone()),
             Meta::Usage(value) => Meta::Usage(value.clone()),
             Meta::Note(value) => Meta::Note(value.clone()),

@@ -1,10 +1,6 @@
 use crate::{
-    error::Error,
-    help::{help, version},
-    meta::Meta,
-    spell::Spell,
-    stack::Stack,
-    BREAK, HELP, MASK, SHIFT, VERSION,
+    error::Error, help, meta::Meta, spell::Spell, stack::Stack, AUTHOR, BREAK, HELP, LICENSE, MASK,
+    SHIFT, VERSION,
 };
 use core::{any::TypeId, cmp::min, default, marker::PhantomData, num::NonZeroUsize, str::FromStr};
 use std::{
@@ -303,6 +299,8 @@ impl<P: Parse> Parse for Node<P> {
                 match self.indices.0.get(&key).copied() {
                     Some(HELP) => return Err(Error::Help(None)),
                     Some(VERSION) => return Err(Error::Version(None)),
+                    Some(LICENSE) => return Err(Error::License(None)),
+                    Some(AUTHOR) => return Err(Error::Author(None)),
                     Some(BREAK) => break,
                     Some(index) => {
                         states.0 = self.parse.parse((
@@ -334,9 +332,7 @@ impl<P: Parse> Parse for Node<P> {
         };
         match run() {
             Ok(values) => Ok(Some(values)),
-            Err(Error::Help(None)) => Err(Error::Help(help(&self.meta))),
-            Err(Error::Version(None)) => Err(Error::Version(version(&self.meta, 1).cloned())),
-            Err(error) => Err(error),
+            Err(error) => Err(fill(error, &self.meta)),
         }
     }
 
@@ -370,8 +366,10 @@ impl<P: Parse> Parse for With<P> {
 
 fn fill(error: Error, meta: &Meta) -> Error {
     match error {
-        Error::Help(None) => Error::Help(help(meta)),
-        Error::Version(None) => Error::Version(version(meta, 1).cloned()),
+        Error::Help(None) => Error::Help(help::help(meta)),
+        Error::Version(None) => Error::Version(help::version(meta, 1)),
+        Error::License(None) => Error::License(help::license(meta, 1)),
+        Error::Author(None) => Error::Author(help::author(meta, 1)),
         _ => error,
     }
 }

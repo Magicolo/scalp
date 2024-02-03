@@ -4,7 +4,10 @@ use std::{borrow::Cow, collections::VecDeque, error};
 #[derive(Clone)]
 pub enum Error {
     Help(Option<String>),
-    Version(Option<Cow<'static, str>>),
+    Version(Option<String>),
+    Author(Option<String>),
+    License(Option<String>),
+
     MissingOptionValue(Option<Cow<'static, str>>, Option<Cow<'static, str>>),
     MissingRequiredValue(Option<Cow<'static, str>>),
     DuplicateOption(Option<Cow<'static, str>>),
@@ -51,6 +54,11 @@ impl fmt::Display for Error {
             Error::Help(None) => write!(f, "Missing help.")?,
             Error::Version(Some(version)) => write!(f, "{version}")?,
             Error::Version(None) => write!(f, "Missing version.")?,
+            Error::Author(Some(author)) => write!(f, "{author}")?,
+            Error::Author(None) => write!(f, "Missing author.")?,
+            Error::License(Some(author)) => write!(f, "{author}")?,
+            Error::License(None) => write!(f, "Missing license.")?,
+
             Error::UnrecognizedArgument(argument, suggestions) => {
                 write!(f, "Unrecognized argument '{argument}'.")?;
                 let mut join = false;
@@ -128,7 +136,7 @@ impl fmt::Display for Error {
             Error::InvalidLongPrefix(prefix) => write!(f, "Invalid long prefix '{prefix}'. A valid long prefix is non-empty, contains only non-alpha-numeric characters and differs from the short prefix.")?,
             Error::DuplicateName(name) => write!(f, "Duplicate name '{name}'.")?,
             Error::InvalidIndex(index) => write!(f, "Invalid index '{index}'.")?,
-            Error::InvalidName(name) => write!(f, "Invalid name '{name}'. A valid name is non-empty and contains only alpha-numeric characters.")?,
+            Error::InvalidName(name) => write!(f, "Invalid name '{name}'. A valid name is non-empty and contains only ascii characters.")?,
             Error::DuplicateNode => write!(f, "Duplicate node.")?,
             Error::GroupNestingLimitOverflow => write!(f, "Group nesting limit overflow.")?,
             Error::MissingOptionNameOrPosition => write!(f, "Missing name or position for option.")?,

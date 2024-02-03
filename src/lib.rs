@@ -19,6 +19,9 @@ pub use crate::{
 
 /*
     TODO:
+    - Offset long names by the short name length if there are any short names.
+    - Column for types before summary.
+    - Specify license.
     - Could I use the same 'Parse' trait to generate an API?
     - Generate usage string automatically.
         - Usage: {verb (for root use the root name)} [position options (if any)] [named options (if any)] {sub-command (if any)}
@@ -52,7 +55,36 @@ pub use crate::{
 
 const HELP: usize = usize::MAX;
 const VERSION: usize = usize::MAX - 1;
-const BREAK: usize = usize::MAX - 2;
+const LICENSE: usize = usize::MAX - 2;
+const AUTHOR: usize = usize::MAX - 3;
+const BREAK: usize = usize::MAX - 4;
+
 const SHIFT: u32 = 5;
 const MASK: usize = (1 << SHIFT) - 1;
 const MAXIMUM: u32 = usize::BITS - 14;
+
+#[macro_export]
+macro_rules! cargo {
+    () => {
+        |builder| {
+            builder
+                .name(env!("CARGO_BIN_NAME").trim())
+                .version(env!("CARGO_PKG_VERSION").trim())
+                .license(
+                    env!("CARGO_PKG_LICENSE").trim(),
+                    env!("CARGO_PKG_LICENSE_FILE").trim(),
+                )
+                .pipe(|builder| {
+                    env!("CARGO_PKG_AUTHORS")
+                        .split(':')
+                        .fold(builder, |builder, author| builder.author(author.trim()))
+                })
+                .help("")
+                .help(env!("CARGO_PKG_DESCRIPTION"))
+                .help("")
+                .note(env!("CARGO_PKG_HOMEPAGE"))
+                .note(env!("CARGO_PKG_REPOSITORY"))
+                .help("")
+        }
+    };
+}
