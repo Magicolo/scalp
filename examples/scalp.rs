@@ -1,9 +1,9 @@
-use scalp::{cargo, Builder, Options};
+use scalp::{header, Builder, Options};
 use std::error;
 
 fn main() -> Result<(), Box<dyn error::Error>> {
     let result = Builder::new()
-        .pipe(cargo!())
+        .pipe(header!())
         .help("")
         .options(Options::all(true, true))
         .build()?

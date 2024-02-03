@@ -64,27 +64,28 @@ const MASK: usize = (1 << SHIFT) - 1;
 const MAXIMUM: u32 = usize::BITS - 14;
 
 #[macro_export]
-macro_rules! cargo {
+macro_rules! header {
     () => {
-        |builder| {
-            builder
-                .name(env!("CARGO_BIN_NAME").trim())
-                .version(env!("CARGO_PKG_VERSION").trim())
-                .license(
-                    env!("CARGO_PKG_LICENSE").trim(),
-                    env!("CARGO_PKG_LICENSE_FILE").trim(),
-                )
-                .pipe(|builder| {
-                    env!("CARGO_PKG_AUTHORS")
-                        .split(':')
-                        .fold(builder, |builder, author| builder.author(author.trim()))
-                })
-                .help("")
-                .help(env!("CARGO_PKG_DESCRIPTION"))
-                .help("")
-                .note(env!("CARGO_PKG_HOMEPAGE"))
-                .note(env!("CARGO_PKG_REPOSITORY"))
-                .help("")
-        }
+        |builder| $crate::header!(builder)
+    };
+    ($builder: expr) => {
+        $builder
+            .name(env!("CARGO_BIN_NAME").trim())
+            .version(env!("CARGO_PKG_VERSION").trim())
+            .license(
+                env!("CARGO_PKG_LICENSE").trim(),
+                env!("CARGO_PKG_LICENSE_FILE").trim(),
+            )
+            .pipe(|builder| {
+                env!("CARGO_PKG_AUTHORS")
+                    .split(':')
+                    .fold(builder, |builder, author| builder.author(author.trim()))
+            })
+            .help("")
+            .help(env!("CARGO_PKG_DESCRIPTION"))
+            .help("")
+            .note(env!("CARGO_PKG_HOMEPAGE"))
+            .note(env!("CARGO_PKG_REPOSITORY"))
+            .help("")
     };
 }
