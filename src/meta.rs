@@ -1,9 +1,16 @@
 use core::{any::TypeId, num::NonZeroUsize};
 use std::borrow::Cow;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Name {
+    Plain,
+    Short,
+    Long,
+}
+
 #[derive(Debug)]
 pub enum Meta {
-    Name(Cow<'static, str>),
+    Name(Name, Cow<'static, str>),
     Position,
     Version(Cow<'static, str>),
     License(Cow<'static, str>, Cow<'static, str>),
@@ -15,9 +22,11 @@ pub enum Meta {
     Required,
     Many(Option<NonZeroUsize>),
     Default(Cow<'static, str>),
+    Valid(Cow<'static, str>),
     Environment(Cow<'static, str>),
     Show,
     Hide,
+    Swizzle,
     Root(Vec<Meta>),
     Option(Vec<Meta>),
     Options(Options),
@@ -64,7 +73,7 @@ impl Options {
 impl Meta {
     pub fn clone(&self, depth: usize) -> Self {
         match self {
-            Meta::Name(value) => Meta::Name(value.clone()),
+            Meta::Name(name, value) => Meta::Name(*name, value.clone()),
             Meta::Position => Meta::Position,
             Meta::Version(value) => Meta::Version(value.clone()),
             Meta::License(name, content) => Meta::License(name.clone(), content.clone()),
@@ -75,10 +84,12 @@ impl Meta {
             Meta::Type(value, identifier) => Meta::Type(value.clone(), *identifier),
             Meta::Required => Meta::Required,
             Meta::Many(value) => Meta::Many(*value),
+            Meta::Valid(value) => Meta::Valid(value.clone()),
             Meta::Default(value) => Meta::Default(value.clone()),
             Meta::Environment(value) => Meta::Environment(value.clone()),
             Meta::Hide => Meta::Hide,
             Meta::Show => Meta::Show,
+            Meta::Swizzle => Meta::Swizzle,
             Meta::Root(metas) if depth > 0 => {
                 Meta::Root(metas.iter().map(|meta| meta.clone(depth - 1)).collect())
             }

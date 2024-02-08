@@ -7,7 +7,7 @@ pub trait Scope: Into<Meta> + Extend<Meta> + DerefMut<Target = Vec<Meta>> {
     }
 }
 
-pub trait Version: Scope {}
+pub trait Node: Scope {}
 pub trait Parent: Scope {}
 pub trait Child: Scope {}
 
@@ -56,8 +56,8 @@ scope!(Option);
 scope!(Group);
 scope!(Verb);
 
-impl Version for Root {}
-impl Version for Verb {}
+impl Node for Root {}
+impl Node for Verb {}
 impl Parent for Root {}
 impl Parent for Group {}
 impl Parent for Verb {}

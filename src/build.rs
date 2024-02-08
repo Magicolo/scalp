@@ -1,7 +1,7 @@
 use crate::{
     case::Case,
     error::Error,
-    meta::{Meta, Options},
+    meta::{Meta, Name, Options},
     parse::{
         Any, At, Default, Environment, Function, Indices, Many, Map, Node, Parse, Parser, Require,
         Value, With,
@@ -27,6 +27,10 @@ pub struct Builder<S, P = At<()>> {
     parse: Result<P, Error>,
     scope: S,
 }
+
+pub trait Flag {}
+impl Flag for Option<bool> {}
+impl Flag for bool {}
 
 impl default::Default for Builder<scope::Root> {
     fn default() -> Self {
@@ -152,8 +156,8 @@ impl<S, P> Builder<S, P> {
         let mut has = false;
         for i in 0..metas.len() {
             match metas.get(i) {
-                Some(Meta::Name(name)) => {
-                    Self::insert_key(name.clone(), indices, index)?;
+                Some(Meta::Name(_, value)) => {
+                    Self::insert_key(value.clone(), indices, index)?;
                     has = true;
                 }
                 None => break,
@@ -174,19 +178,32 @@ impl<S, P> Builder<S, P> {
         index: usize,
     ) -> Result<(), Error> {
         let mut has = false;
+        let mut shorts = Vec::new();
+        let mut swizzle = false;
         for i in 0..metas.len() {
             match metas.get(i) {
-                Some(Meta::Name(name)) => {
-                    Self::insert_key(name.clone(), indices, index)?;
+                Some(Meta::Name(name, value)) => {
+                    Self::insert_key(value.clone(), indices, index)?;
                     has = true;
+                    if let Name::Short = name {
+                        shorts.extend(value.chars().nth(self.short.len()));
+                    }
                 }
+                Some(Meta::Swizzle) => swizzle = true,
                 Some(Meta::Position) => {
-                    indices.1.push(index);
+                    indices.positions.push(index);
                     has = true;
                 }
                 None => break,
                 _ => {}
             };
+        }
+        if swizzle {
+            if shorts.is_empty() {
+                return Err(Error::MissingShortOptionNameForSwizzling);
+            } else {
+                indices.swizzles.extend(shorts);
+            }
         }
         if has {
             Ok(())
@@ -274,15 +291,15 @@ impl<S, P> Builder<S, P> {
     ) -> Result<(), Error> {
         let mut option = vec![Meta::Help(Cow::Borrowed(help))];
         if let Some(short) = short {
-            let name = self.option_name(short)?;
-            if Self::insert_key(name.clone(), indices, index).is_ok() {
-                option.push(Meta::Name(name));
+            let (name, value) = self.option_name(short)?;
+            if Self::insert_key(value.clone(), indices, index).is_ok() {
+                option.push(Meta::Name(name, value));
             }
         }
         if let Some(long) = long {
-            let name = self.option_name(long)?;
-            if Self::insert_key(name.clone(), indices, index).is_ok() {
-                option.push(Meta::Name(name));
+            let (name, value) = self.option_name(long)?;
+            if Self::insert_key(value.clone(), indices, index).is_ok() {
+                option.push(Meta::Name(name, value));
             }
         }
         if option.len() > 1 {
@@ -296,7 +313,7 @@ impl<S, P> Builder<S, P> {
         indices: &mut Indices,
         index: usize,
     ) -> Result<(), Error> {
-        match indices.0.entry(key) {
+        match indices.indices.entry(key) {
             Entry::Occupied(entry) => Err(Error::DuplicateName(entry.key().to_string())),
             Entry::Vacant(entry) => {
                 entry.insert(index);
@@ -308,46 +325,50 @@ impl<S, P> Builder<S, P> {
     fn option_name(
         &mut self,
         name: impl Into<Cow<'static, str>>,
-    ) -> Result<Cow<'static, str>, Error> {
+    ) -> Result<(Name, Cow<'static, str>), Error> {
         let mut outer = name.into();
-        let name = outer.trim();
-        if name.is_empty() || !name.chars().all(|letter| letter.is_ascii()) {
-            return Err(Error::InvalidName(outer.to_string()));
-        } else if name.len() == 1 {
+        let value = outer.trim();
+        let name = if value.is_empty() || !value.chars().all(|letter| letter.is_ascii()) {
+            return Err(Error::InvalidOptionName(outer.to_string()));
+        } else if value.len() == 1 {
             self.buffer.clear();
             self.buffer.push_str(&self.short);
-            self.buffer.push_str(name);
+            self.buffer.push_str(value);
+            Name::Short
         } else {
             self.buffer.clear();
             self.buffer.push_str(&self.long);
-            self.case.convert_in(name, &mut self.buffer)?;
-        }
+            self.case.convert_in(value, &mut self.buffer)?;
+            Name::Long
+        };
 
         let inner = outer.to_mut();
         inner.clear();
         inner.push_str(&self.buffer);
-        Ok(outer)
+        Ok((name, outer))
     }
 
     fn verb_name(
         &mut self,
         name: impl Into<Cow<'static, str>>,
-    ) -> Result<Cow<'static, str>, Error> {
+    ) -> Result<(Name, Cow<'static, str>), Error> {
         let mut outer = name.into();
-        let name = outer.trim();
-        if name.is_empty() || !name.chars().all(|letter| letter.is_ascii()) {
-            return Err(Error::InvalidName(outer.to_string()));
-        } else if name.len() == 1 {
+        let value = outer.trim();
+        let name = if value.is_empty() || !value.chars().all(|letter| letter.is_ascii()) {
+            return Err(Error::InvalidVerbName(outer.to_string()));
+        } else if value.len() == 1 {
             self.buffer.clear();
-            self.buffer.push_str(name);
+            self.buffer.push_str(value);
+            Name::Short
         } else {
             self.buffer.clear();
-            self.case.convert_in(name, &mut self.buffer)?;
-        }
+            self.case.convert_in(value, &mut self.buffer)?;
+            Name::Long
+        };
         let inner = outer.to_mut();
         inner.clear();
         inner.push_str(&self.buffer);
-        Ok(outer)
+        Ok((name, outer))
     }
 }
 
@@ -623,7 +644,7 @@ impl<S: scope::Parent, P> Builder<S, P> {
     }
 }
 
-impl<S: scope::Version, P> Builder<S, P> {
+impl<S: scope::Node, P> Builder<S, P> {
     pub fn version(self, version: impl Into<Cow<'static, str>>) -> Self {
         self.meta(Meta::Version(version.into()))
     }
@@ -680,13 +701,13 @@ impl<P> Builder<scope::Root, P> {
     {
         let (root, mut builder) = self.swap_scope(());
         let mut meta = Meta::from(root);
-        let indices = builder.descend(&mut meta);
+        let indices = builder.descend(&mut meta)?;
         Ok(Parser {
             short: builder.short,
             long: builder.long,
             parse: Node {
                 meta,
-                indices: indices?,
+                indices,
                 parse: builder.parse?,
             },
         })
@@ -697,7 +718,7 @@ impl<P> Builder<scope::Root, P> {
         if name.chars().all(char::is_whitespace) {
             self
         } else {
-            self.meta(Meta::Name(name))
+            self.meta(Meta::Name(Name::Plain, name))
         }
     }
 
@@ -731,7 +752,7 @@ impl<P> Builder<scope::Group, P> {
         if name.chars().all(char::is_whitespace) {
             self
         } else {
-            self.meta(Meta::Name(name))
+            self.meta(Meta::Name(Name::Plain, name))
         }
     }
 }
@@ -742,7 +763,7 @@ impl<P> Builder<scope::Verb, P> {
         if name.chars().all(char::is_whitespace) {
             self
         } else {
-            let meta = self.verb_name(name).map(Meta::Name);
+            let meta = self.verb_name(name).map(|pair| Meta::Name(pair.0, pair.1));
             self.try_meta(meta)
         }
     }
@@ -754,7 +775,9 @@ impl<P> Builder<scope::Option, P> {
         if name.chars().all(char::is_whitespace) {
             self
         } else {
-            let meta = self.option_name(name).map(Meta::Name);
+            let meta = self
+                .option_name(name)
+                .map(|pair| Meta::Name(pair.0, pair.1));
             self.try_meta(meta)
         }
     }
@@ -763,27 +786,36 @@ impl<P> Builder<scope::Option, P> {
         self.meta(Meta::Position)
     }
 
+    pub fn swizzle(self) -> Self
+    where
+        P: Parse,
+        <P as Parse>::Value: Flag,
+    {
+        self.meta(Meta::Swizzle)
+    }
+
     pub fn default<T: Clone + fmt::Debug>(
         self,
         default: impl Into<T>,
-    ) -> Builder<scope::Option, Default<P, T>>
+    ) -> Builder<scope::Option, Default<P, impl Fn() -> T>>
     where
         P: Parse<Value = Option<T>>,
     {
         let default = default.into();
-        let display = format!("{default:?}");
-        self.default_with(default, display)
+        let help = format!("{default:?}");
+        self.default_with(move || default.clone(), move |_| help)
     }
 
-    pub fn default_with<T: Clone>(
+    pub fn default_with<T, F: Fn() -> T>(
         self,
-        default: T,
-        debug: impl Into<Cow<'static, str>>,
-    ) -> Builder<scope::Option, Default<P, T>>
+        default: F,
+        help: impl FnOnce(Case) -> String,
+    ) -> Builder<scope::Option, Default<P, F>>
     where
         P: Parse<Value = Option<T>>,
     {
-        self.meta(Meta::Default(debug.into()))
+        let case = self.case;
+        self.meta(Meta::Default(Cow::Owned(help(case))))
             .map_parse(|parse| Default(parse, default))
     }
 
@@ -814,22 +846,29 @@ impl<P> Builder<scope::Option, P> {
         self.meta(Meta::Required).map_parse(Require)
     }
 
-    pub fn many<T, I: default::Default + Extend<T>>(self) -> Builder<scope::Option, Many<P, I>>
+    pub fn many<T, I: default::Default + Extend<T>>(
+        self,
+    ) -> Builder<scope::Option, Many<P, I, impl Fn() -> I, impl Fn(I, T) -> I>>
     where
         P: Parse<Value = Option<T>>,
     {
-        self.many_with(Some(NonZeroUsize::MIN))
+        self.many_with(Some(NonZeroUsize::MIN), I::default, |mut items, item| {
+            items.extend([item]);
+            items
+        })
     }
 
-    pub fn many_with<T, I: default::Default + Extend<T>>(
+    pub fn many_with<T, I, N: Fn() -> I, F: Fn(I, T) -> I>(
         self,
         per: Option<NonZeroUsize>,
-    ) -> Builder<scope::Option, Many<P, I>>
+        new: N,
+        fold: F,
+    ) -> Builder<scope::Option, Many<P, I, N, F>>
     where
         P: Parse<Value = Option<T>>,
     {
         self.meta(Meta::Many(per))
-            .map_parse(|parse| Many(parse, per, PhantomData))
+            .map_parse(|parse| Many(parse, per, new, fold, PhantomData))
     }
 }
 

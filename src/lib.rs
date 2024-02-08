@@ -19,10 +19,10 @@ pub use crate::{
 
 /*
     TODO:
-    - Offset long names by the short name length if there are any short names.
-    - Column for types before summary.
-    - Specify license.
-    - Could I use the same 'Parse' trait to generate an API?
+    - 'swizzle' should be a property of the option?
+        - Would allow enabling of swizzling only on 'bool' options.
+    - Expose 'swizzling' in the help message (maybe in the tags? -> <swizzle>).
+    - Fix help tags (ex: <required, many, default = $BOBA, "fett">).
     - Generate usage string automatically.
         - Usage: {verb (for root use the root name)} [position options (if any)] [named options (if any)] {sub-command (if any)}
     - Support for styled formatting out of the box; use a feature?
@@ -66,7 +66,7 @@ const MAXIMUM: u32 = usize::BITS - 14;
 #[macro_export]
 macro_rules! header {
     () => {
-        |builder| $crate::header!(builder)
+        |builder: $crate::Builder<$crate::scope::Root, _>| $crate::header!(builder)
     };
     ($builder: expr) => {
         $builder

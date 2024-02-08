@@ -240,6 +240,7 @@ fn global_options(builder: Builder<scope::Group>) -> Builder<scope::Group, impl 
             .name("D")
             .name("debug")
             .help("Enable debug mode.")
+            .swizzle()
             .default(false)
         )
         .option(|option| option
@@ -252,7 +253,18 @@ fn global_options(builder: Builder<scope::Group>) -> Builder<scope::Group, impl 
             .name("l")
             .name("log-level")
             .help("Set the logging level.")
-            .default(LogLevel::Info)
+            /*
+            .choose(|choose| choose
+                .choice(["info", "i"], |_| LogLevel::Info)
+                .choice(["debug", "d"], |_| LogLevel::Debug)
+                .choice(["warn", "w"], |_| LogLevel::Warn)
+                .choice(["error", "e"], |_| LogLevel::Error)
+                .choice(["fatal", "f"], |_| LogLevel::Fatal)
+                .swizzle()
+                .default("info")
+            )
+            */
+            .default_with(|| LogLevel::Info, |case| case.convert("info"))
         )
         .options(Options::all(true, true))
         .map(|(config, context, debug, host, log_level)| GlobalOptions {

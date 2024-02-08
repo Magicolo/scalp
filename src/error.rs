@@ -31,12 +31,15 @@ pub enum Error {
     DuplicateNode,
     GroupNestingLimitOverflow,
     InvalidIndex(usize),
-    InvalidName(String),
+    InvalidOptionName(String),
+    InvalidVerbName(String),
     MissingOptionNameOrPosition,
     MissingVerbName,
     FailedToParseArguments,
     InvalidShortPrefix(Cow<'static, str>),
     InvalidLongPrefix(Cow<'static, str>),
+    MissingShortOptionNameForSwizzling,
+    InvalidSwizzleOption(char),
 }
 
 impl error::Error for Error {}
@@ -136,12 +139,15 @@ impl fmt::Display for Error {
             Error::InvalidLongPrefix(prefix) => write!(f, "Invalid long prefix '{prefix}'. A valid long prefix is non-empty, contains only non-alpha-numeric characters and differs from the short prefix.")?,
             Error::DuplicateName(name) => write!(f, "Duplicate name '{name}'.")?,
             Error::InvalidIndex(index) => write!(f, "Invalid index '{index}'.")?,
-            Error::InvalidName(name) => write!(f, "Invalid name '{name}'. A valid name is non-empty and contains only ascii characters.")?,
+            Error::InvalidVerbName(name) => write!(f, "Invalid verb name '{name}'. A valid verb name is non-empty and contains only ascii characters.")?,
+            Error::InvalidOptionName(name) => write!(f, "Invalid option name '{name}'. A valid option name is non-empty and contains only ascii characters.")?,
             Error::DuplicateNode => write!(f, "Duplicate node.")?,
             Error::GroupNestingLimitOverflow => write!(f, "Group nesting limit overflow.")?,
             Error::MissingOptionNameOrPosition => write!(f, "Missing name or position for option.")?,
             Error::MissingVerbName => write!(f, "Missing name for verb.")?,
             Error::FailedToParseArguments => write!(f, "Failed to parse arguments.")?,
+            Error::MissingShortOptionNameForSwizzling => write!(f, "Missing short option name for swizzling. A valid short option name has only a single ascii character.")?,
+            Error::InvalidSwizzleOption(value) => write!(f, "Invalid swizzle option '{value}'. A valid swizzle option is tagged for swizzling, has a short name and is of type 'boolean'.")?,
 
             Error::Format(error) => error.fmt(f)?,
             Error::Text(error) => error.fmt(f)?,

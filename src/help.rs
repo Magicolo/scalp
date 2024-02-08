@@ -1,10 +1,10 @@
-use crate::meta::Meta;
+use crate::meta::{Meta, Name};
 use core::{
     fmt::{self, Write},
     mem::{replace, take},
     slice::from_ref,
 };
-use std::{borrow::Cow, fs, ops::Deref};
+use std::{borrow::Cow, fmt::Display, fs, ops::Deref};
 use termion::style::{Bold, Faint, Italic, NoFaint, NoItalic, NoUnderline, Reset, Underline};
 
 const INDENTATION: &str = "  ";
@@ -14,6 +14,13 @@ struct Helper<'a> {
     buffer: &'a mut String,
     indent: usize,
     width: usize,
+}
+
+#[derive(Default)]
+struct Columns {
+    short: usize,
+    long: usize,
+    types: usize,
 }
 
 impl<'a> Helper<'a> {
@@ -58,12 +65,16 @@ impl<'a> Helper<'a> {
     fn names(
         &mut self,
         metas: &[Meta],
+        short: bool,
+        long: bool,
         prefix: impl fmt::Display,
         position: &mut usize,
-    ) -> Result<bool, fmt::Error> {
+    ) -> Result<usize, fmt::Error> {
         self.join(metas, prefix, ", ", |meta| match meta {
-            Meta::Name(value) => Some(Cow::Borrowed(value)),
-            Meta::Position => {
+            Meta::Name(Name::Plain, value) => Some(Cow::Borrowed(value)),
+            Meta::Name(Name::Short, value) if short => Some(Cow::Borrowed(value)),
+            Meta::Name(Name::Long, value) if long => Some(Cow::Borrowed(value)),
+            Meta::Position if short => {
                 let value = format!("[{position}]");
                 *position += 1;
                 Some(Cow::Owned(value))
@@ -72,14 +83,21 @@ impl<'a> Helper<'a> {
         })
     }
 
-    fn versions(&mut self, metas: &[Meta], prefix: impl fmt::Display) -> Result<bool, fmt::Error> {
+    fn types(&mut self, metas: &[Meta], prefix: impl fmt::Display) -> Result<usize, fmt::Error> {
+        self.join(metas, prefix, ", ", |meta| match meta {
+            Meta::Type(value, _) => Some(Cow::Borrowed(value)),
+            _ => None,
+        })
+    }
+
+    fn versions(&mut self, metas: &[Meta], prefix: impl fmt::Display) -> Result<usize, fmt::Error> {
         self.join(metas, prefix, ", ", |meta| match meta {
             Meta::Version(value) => Some(Cow::Borrowed(value)),
             _ => None,
         })
     }
 
-    fn authors(&mut self, metas: &[Meta], prefix: impl fmt::Display) -> Result<bool, fmt::Error> {
+    fn authors(&mut self, metas: &[Meta], prefix: impl fmt::Display) -> Result<usize, fmt::Error> {
         self.join(metas, prefix, ", ", |meta| match meta {
             Meta::Author(value) => Some(Cow::Borrowed(value)),
             _ => None,
@@ -92,28 +110,27 @@ impl<'a> Helper<'a> {
         prefix: impl fmt::Display,
         separator: impl fmt::Display,
         mut find: impl FnMut(&Meta) -> Option<Cow<str>>,
-    ) -> Result<bool, fmt::Error> {
-        let mut join = false;
-        let mut has = false;
-        let mut metas = metas.iter();
-        while let Some(meta) = metas.next() {
-            match meta {
-                Meta::Hide => hide(metas.by_ref()),
-                meta => {
-                    if let Some(value) = find(meta) {
-                        if join {
-                            write!(self.buffer, "{separator}")?;
-                        } else {
-                            join = true;
-                            write!(self.buffer, "{prefix}")?;
+    ) -> Result<usize, fmt::Error> {
+        self.write_with(|helper| {
+            let mut join = false;
+            let mut metas = metas.iter();
+            while let Some(meta) = metas.next() {
+                match meta {
+                    Meta::Hide => hide(metas.by_ref()),
+                    meta => {
+                        if let Some(value) = find(meta) {
+                            if replace(&mut join, true) {
+                                write!(helper.buffer, "{separator}")?;
+                            } else {
+                                write!(helper.buffer, "{prefix}")?;
+                            }
+                            write!(helper.buffer, "{value}")?;
                         }
-                        write!(self.buffer, "{value}")?;
-                        has = true;
                     }
                 }
             }
-        }
-        Ok(has)
+            Ok(())
+        })
     }
 
     fn wrap(
@@ -172,16 +189,26 @@ impl<'a> Helper<'a> {
         Ok(())
     }
 
-    fn name_width(metas: &[Meta], depth: usize, join: &mut bool) -> usize {
-        let mut width = 0;
+    fn columns(
+        metas: &[Meta],
+        depth: usize,
+        (short, long, types): &mut (bool, bool, bool),
+    ) -> Columns {
+        let mut columns = Columns::default();
         let mut metas = metas.iter();
         while let Some(meta) = metas.next() {
             match meta {
-                Meta::Name(name) if depth == 0 => {
-                    width += name.len() + if replace(join, true) { 2 } else { 0 }
-                }
                 Meta::Position if depth == 0 => {
-                    width += 3 + if replace(join, true) { 2 } else { 0 }
+                    columns.short += 3 + if replace(short, true) { 2 } else { 0 }
+                }
+                Meta::Name(Name::Short, value) if depth == 0 => {
+                    columns.short += value.len() + if replace(short, true) { 2 } else { 0 }
+                }
+                Meta::Name(Name::Long, value) if depth == 0 => {
+                    columns.long += value.len() + if replace(long, true) { 2 } else { 0 }
+                }
+                Meta::Type(value, _) if depth == 0 => {
+                    columns.types += value.len() + if replace(types, true) { 2 } else { 0 }
                 }
                 Meta::Root(metas)
                 | Meta::Option(metas)
@@ -189,13 +216,16 @@ impl<'a> Helper<'a> {
                 | Meta::Group(metas)
                     if depth > 0 =>
                 {
-                    width = width.max(Self::name_width(metas, depth - 1, &mut false))
+                    let child = Self::columns(metas, depth - 1, &mut (false, false, false));
+                    columns.short = columns.short.max(child.short);
+                    columns.long = columns.long.max(child.long);
+                    columns.types = columns.types.max(child.types);
                 }
                 Meta::Hide => hide(metas.by_ref()),
                 _ => {}
             }
         }
-        width
+        columns
     }
 
     fn tags(&mut self, metas: &[Meta]) -> Result<bool, fmt::Error> {
@@ -243,7 +273,7 @@ impl<'a> Helper<'a> {
 
     fn node(&mut self, metas: &[Meta], depth: usize) -> Result<(), fmt::Error> {
         let mut option = 0;
-        let names = Self::name_width(metas, 1, &mut false);
+        let columns = Self::columns(metas, 1, &mut (false, false, false));
         let mut helper = self.own();
         let mut metas = metas.iter();
         while let Some(meta) = metas.next() {
@@ -278,11 +308,13 @@ impl<'a> Helper<'a> {
                 Meta::Root(metas) => {
                     writeln!(helper.buffer)?;
                     helper.indentation()?;
-                    if helper.names(metas, format_args!("{Underline}{Bold}"), &mut 0)? {
+                    if helper.names(metas, true, true, format_args!("{Underline}{Bold}"), &mut 0)?
+                        > 0
+                    {
                         write!(helper.buffer, "{Reset}{Underline}")?;
                         helper.versions(metas, " ")?;
                         write!(helper.buffer, "{NoUnderline}")?;
-                        if helper.authors(metas, format_args!("{Italic}{Faint} by "))? {
+                        if helper.authors(metas, format_args!("{Italic}{Faint} by "))? > 0 {
                             write!(helper.buffer, "{NoFaint}{NoItalic}")?;
                         }
                     }
@@ -291,7 +323,7 @@ impl<'a> Helper<'a> {
                 }
                 Meta::Group(metas) => {
                     helper.indentation()?;
-                    if helper.names(metas, format_args!("{Bold}"), &mut 0)? {
+                    if helper.names(metas, true, true, format_args!("{Bold}"), &mut 0)? > 0 {
                         writeln!(helper.buffer, "{Reset}")?;
                         helper.indent().node(metas, depth + 1)?;
                         writeln!(helper.buffer)?;
@@ -302,7 +334,7 @@ impl<'a> Helper<'a> {
                 Meta::Verb(metas) if depth == 0 => {
                     writeln!(helper.buffer)?;
                     helper.indentation()?;
-                    if helper.names(metas, format_args!("{Bold}"), &mut 0)? {
+                    if helper.names(metas, true, true, format_args!("{Bold}"), &mut 0)? > 0 {
                         helper.versions(metas, " ")?;
                         writeln!(helper.buffer, "{Reset}")?;
                     } else {
@@ -312,26 +344,13 @@ impl<'a> Helper<'a> {
                 }
                 Meta::Verb(metas) => {
                     helper.indentation()?;
-                    let indent = names + INDENT;
-                    let start = helper.buffer.len();
-                    helper.names(metas, "", &mut 0)?;
-                    let width = helper.buffer.len().saturating_sub(start);
-                    helper.space(indent.saturating_sub(width))?;
-                    helper.indent_with(indent).help(metas)?;
+                    helper.write_columns(metas, &columns, &mut 0)?.help(metas)?;
                     writeln!(helper.buffer)?;
                 }
                 Meta::Option(metas) => {
                     helper.indentation()?;
-                    let indent = names + INDENT;
-                    let start = helper.buffer.len();
-                    helper.names(metas, "", &mut option)?;
-                    let width = helper.buffer.len().saturating_sub(start);
-                    helper.space(indent.saturating_sub(width))?;
-
-                    let mut helper = helper.indent_with(indent);
-                    let start = helper.buffer.len();
-                    helper.help(metas)?;
-                    let width = helper.buffer.len().saturating_sub(start);
+                    let mut helper = helper.write_columns(metas, &columns, &mut option)?;
+                    let width = helper.write_with(|helper| helper.help(metas))?;
                     let buffer = helper.scope(|mut helper| helper.tags(metas))?;
                     if width + buffer.len() > helper.width - helper.indent {
                         writeln!(helper.buffer)?;
@@ -344,6 +363,64 @@ impl<'a> Helper<'a> {
             }
         }
         Ok(())
+    }
+
+    fn write_columns(
+        &mut self,
+        metas: &[Meta],
+        columns: &Columns,
+        option: &mut usize,
+    ) -> Result<Helper, fmt::Error> {
+        let mut format = 0;
+        let width = self.write_with(|helper| {
+            helper.write_column(columns.short, format_args!("{INDENTATION}"), |helper| {
+                helper.names(metas, true, false, "", option)?;
+                Ok(())
+            })?;
+            helper.write_column(columns.long, format_args!("{INDENTATION}"), |helper| {
+                helper.names(metas, false, true, "", option)?;
+                Ok(())
+            })?;
+            format += helper.write(format_args!("{Faint}"))?;
+            helper.write_column(columns.types + 2, format_args!("{INDENTATION}"), |helper| {
+                if helper.types(metas, "<")? > 0 {
+                    write!(helper.buffer, ">")?;
+                }
+                Ok(())
+            })?;
+            format += helper.write(format_args!("{NoFaint}"))?;
+            Ok(())
+        })?;
+        Ok(self.indent_with(width.saturating_sub(format)))
+    }
+
+    fn write(&mut self, value: impl Display) -> Result<usize, fmt::Error> {
+        self.write_with(|helper| write!(helper.buffer, "{value}"))
+    }
+
+    fn write_column(
+        &mut self,
+        width: usize,
+        suffix: impl fmt::Display,
+        write: impl FnOnce(&mut Self) -> Result<(), fmt::Error>,
+    ) -> Result<bool, fmt::Error> {
+        if width > 0 {
+            let actual = self.write_with(write)?;
+            write!(self.buffer, "{suffix}")?;
+            self.space(width.saturating_sub(actual))?;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
+    fn write_with(
+        &mut self,
+        write: impl FnOnce(&mut Self) -> Result<(), fmt::Error>,
+    ) -> Result<usize, fmt::Error> {
+        let start = self.buffer.len();
+        write(self)?;
+        Ok(self.buffer.len().saturating_sub(start))
     }
 }
 

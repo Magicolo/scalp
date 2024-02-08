@@ -2,10 +2,10 @@ use crate::{
     error::Error, help, meta::Meta, spell::Spell, stack::Stack, AUTHOR, BREAK, HELP, LICENSE, MASK,
     SHIFT, VERSION,
 };
-use core::{any::TypeId, cmp::min, default, marker::PhantomData, num::NonZeroUsize, str::FromStr};
+use core::{any::TypeId, cmp::min, marker::PhantomData, num::NonZeroUsize, str::FromStr};
 use std::{
     borrow::Cow,
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
 };
 
 #[derive(Debug)]
@@ -27,7 +27,11 @@ pub struct Parser<P> {
 }
 
 #[derive(Debug, Default)]
-pub(crate) struct Indices(pub HashMap<Cow<'static, str>, usize>, pub Vec<usize>);
+pub(crate) struct Indices {
+    pub indices: HashMap<Cow<'static, str>, usize>,
+    pub positions: Vec<usize>,
+    pub swizzles: HashSet<char>,
+}
 
 #[derive(Debug)]
 pub struct Node<P> {
@@ -52,9 +56,11 @@ pub struct Value<T>(pub(crate) PhantomData<T>);
 pub struct Function<F>(pub(crate) F);
 
 #[derive(Debug)]
-pub struct Many<P, I>(
+pub struct Many<P, I, N, F>(
     pub(crate) P,
     pub(crate) Option<NonZeroUsize>,
+    pub(crate) N,
+    pub(crate) F,
     pub(crate) PhantomData<I>,
 );
 
@@ -116,21 +122,25 @@ impl<'a> State<'a> {
         }
     }
 
-    fn key(&mut self) -> Option<Cow<'static, str>> {
-        let mut key = self.arguments.pop_front()?;
+    fn key(&mut self, swizzles: &HashSet<char>) -> Result<Option<Cow<'static, str>>, Error> {
+        let Some(mut key) = self.arguments.pop_front() else {
+            return Ok(None);
+        };
+
         self.index = 0;
         self.key = None;
-        if key.len() > self.short.len() + 1
-            && key.starts_with(self.short)
-            && !key.starts_with(self.long)
-        {
+        if key.starts_with(self.short) && !key.starts_with(self.long) {
             for key in key.chars().skip(self.short.len() + 1) {
-                self.arguments
-                    .push_front(Cow::Owned(format!("{}{key}", self.short)));
+                if swizzles.contains(&key) {
+                    self.arguments
+                        .push_front(Cow::Owned(format!("{}{key}", self.short)));
+                } else {
+                    return Err(Error::InvalidSwizzleOption(key));
+                }
             }
-            key.to_mut().truncate(2);
+            key.to_mut().truncate(self.short.len() + 1);
         }
-        Some(key)
+        Ok(Some(key))
     }
 
     fn missing_option(&self) -> Error {
@@ -289,14 +299,14 @@ impl<P: Parse> Parse for Node<P> {
 
         let mut run = || {
             let state = self.parse.initialize(states.1.own())?;
-            if self.indices.0.is_empty() && self.indices.1.is_empty() {
+            if self.indices.indices.is_empty() && self.indices.positions.is_empty() {
                 return self.parse.finalize((state, states.1.own()));
             }
 
             let mut states = (state, states.1.own());
             let mut at = 0;
-            while let Some(key) = states.1.key() {
-                match self.indices.0.get(&key).copied() {
+            while let Some(key) = states.1.key(&self.indices.swizzles)? {
+                match self.indices.indices.get(&key).copied() {
                     Some(HELP) => return Err(Error::Help(None)),
                     Some(VERSION) => return Err(Error::Version(None)),
                     Some(LICENSE) => return Err(Error::License(None)),
@@ -308,7 +318,7 @@ impl<P: Parse> Parse for Node<P> {
                             states.1.with(Some(&self.meta), Some(&key), Some(index)),
                         ))?
                     }
-                    None => match self.indices.1.get(at).copied() {
+                    None => match self.indices.positions.get(at).copied() {
                         Some(index) => {
                             states.1.restore(key);
                             states.0 = self.parse.parse((
@@ -320,7 +330,7 @@ impl<P: Parse> Parse for Node<P> {
                         None => {
                             let suggestions = Spell::new().suggest(
                                 &key,
-                                self.indices.0.keys().cloned(),
+                                self.indices.indices.keys().cloned(),
                                 min(key.len() / 3, 3),
                             );
                             return Err(Error::UnrecognizedArgument(key, suggestions));
@@ -411,7 +421,7 @@ impl<T, P: Parse<Value = Option<T>>> Parse for Require<P> {
     }
 }
 
-impl<T: Clone, P: Parse<Value = Option<T>>> Parse for Default<P, T> {
+impl<T, F: Fn() -> T, P: Parse<Value = Option<T>>> Parse for Default<P, F> {
     type State = P::State;
     type Value = T;
 
@@ -426,7 +436,7 @@ impl<T: Clone, P: Parse<Value = Option<T>>> Parse for Default<P, T> {
     fn finalize(&self, states: (Self::State, State)) -> Result<Self::Value, Error> {
         match self.0.finalize(states)? {
             Some(value) => Ok(value),
-            None => Ok(self.1.clone()),
+            None => Ok(self.1()),
         }
     }
 }
@@ -518,7 +528,7 @@ impl<T: 'static, F: Fn(&str) -> Option<T>> Parse for Function<F> {
     }
 }
 
-impl<T, P: Parse<Value = Option<T>>, I: default::Default + Extend<T>> Parse for Many<P, I> {
+impl<T, P: Parse<Value = Option<T>>, I, N: Fn() -> I, F: Fn(I, T) -> I> Parse for Many<P, I, N, F> {
     type State = Option<I>;
     type Value = Option<I>;
 
@@ -527,7 +537,7 @@ impl<T, P: Parse<Value = Option<T>>, I: default::Default + Extend<T>> Parse for 
     }
 
     fn parse(&self, mut states: (Self::State, State)) -> Result<Self::State, Error> {
-        let mut items = states.0.unwrap_or_default();
+        let mut items = states.0.unwrap_or_else(&self.2);
         let mut index = 0;
         let count = self.1.map_or(usize::MAX, NonZeroUsize::get);
         let error = loop {
@@ -547,7 +557,7 @@ impl<T, P: Parse<Value = Option<T>>, I: default::Default + Extend<T>> Parse for 
                 Ok(None) => break None,
                 Err(error) => break Some(error),
             };
-            items.extend([item]);
+            items = self.3(items, item);
             index += 1;
         };
         if index == 0 {
