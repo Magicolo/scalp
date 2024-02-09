@@ -19,15 +19,9 @@ pub use crate::{
 
 /*
     TODO:
-    - 'swizzle' should be a property of the option?
-        - Would allow enabling of swizzling only on 'bool' options.
-    - Expose 'swizzling' in the help message (maybe in the tags? -> <swizzle>).
-    - Fix help tags (ex: <required, many, default = $BOBA, "fett">).
     - Generate usage string automatically.
         - Usage: {verb (for root use the root name)} [position options (if any)] [named options (if any)] {sub-command (if any)}
-    - Support for styled formatting out of the box; use a feature?
-    - Parse with graceful handling of 'Error::Help' and 'Error::Version'.
-    - Support for indexed arguments.
+    - Support for styled formatting out of the box; use a feature for termion?
     - Ensure that variables don't obscure the context variable.
     - Support for streamed arguments via stdin, file system, http.
     - Ability to overwrite the type name.

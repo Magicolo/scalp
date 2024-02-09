@@ -55,6 +55,7 @@ scope!(Root);
 scope!(Option);
 scope!(Group);
 scope!(Verb);
+scope!(Valid);
 
 impl Node for Root {}
 impl Node for Verb {}

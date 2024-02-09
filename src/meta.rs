@@ -19,10 +19,9 @@ pub enum Meta {
     Usage(Cow<'static, str>),
     Note(Cow<'static, str>),
     Type(Cow<'static, str>, TypeId),
-    Required,
+    Require,
     Many(Option<NonZeroUsize>),
     Default(Cow<'static, str>),
-    Valid(Cow<'static, str>),
     Environment(Cow<'static, str>),
     Show,
     Hide,
@@ -32,6 +31,7 @@ pub enum Meta {
     Options(Options),
     Verb(Vec<Meta>),
     Group(Vec<Meta>),
+    Valid(Vec<Meta>),
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -82,9 +82,8 @@ impl Meta {
             Meta::Usage(value) => Meta::Usage(value.clone()),
             Meta::Note(value) => Meta::Note(value.clone()),
             Meta::Type(value, identifier) => Meta::Type(value.clone(), *identifier),
-            Meta::Required => Meta::Required,
+            Meta::Require => Meta::Require,
             Meta::Many(value) => Meta::Many(*value),
-            Meta::Valid(value) => Meta::Valid(value.clone()),
             Meta::Default(value) => Meta::Default(value.clone()),
             Meta::Environment(value) => Meta::Environment(value.clone()),
             Meta::Hide => Meta::Hide,
@@ -107,6 +106,10 @@ impl Meta {
                 Meta::Group(metas.iter().map(|meta| meta.clone(depth - 1)).collect())
             }
             Meta::Group(_) => Meta::Group(Vec::new()),
+            Meta::Valid(metas) if depth > 0 => {
+                Meta::Valid(metas.iter().map(|meta| meta.clone(depth - 1)).collect())
+            }
+            Meta::Valid(_) => Meta::Group(Vec::new()),
         }
     }
 

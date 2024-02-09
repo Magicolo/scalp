@@ -92,6 +92,13 @@ pub enum LogLevel {
     Fatal = 5,
 }
 
+trait Enum: Sized {
+    const NAMES: &'static [&'static str];
+
+    fn name(&self) -> Option<&'static str>;
+    fn value(name: &str) -> Option<Self>;
+}
+
 impl fmt::Display for LogLevel {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Debug::fmt(self, f)
@@ -241,7 +248,6 @@ fn global_options(builder: Builder<scope::Group>) -> Builder<scope::Group, impl 
             .name("debug")
             .help("Enable debug mode.")
             .swizzle()
-            .default(false)
         )
         .option(|option| option
             .name("H")
@@ -253,24 +259,20 @@ fn global_options(builder: Builder<scope::Group>) -> Builder<scope::Group, impl 
             .name("l")
             .name("log-level")
             .help("Set the logging level.")
-            /*
-            .choose(|choose| choose
-                .choice(["info", "i"], |_| LogLevel::Info)
-                .choice(["debug", "d"], |_| LogLevel::Debug)
-                .choice(["warn", "w"], |_| LogLevel::Warn)
-                .choice(["error", "e"], |_| LogLevel::Error)
-                .choice(["fatal", "f"], |_| LogLevel::Fatal)
-                .swizzle()
-                .default("info")
-            )
-            */
-            .default_with(|| LogLevel::Info, |case| case.convert("info"))
+            .parse::<LogLevel>()
+            .default_with(|| LogLevel::Info, |_| "info")
+            // .default("info")
+            // .valid(|valid| valid.is("i").is("info").map(|_| LogLevel::Info).swizzle())
+            // .valid(|valid| valid.is("d").is("debug").map(|_| LogLevel::Debug).swizzle())
+            // .valid(|valid| valid.is("w").is("warn").map(|_| LogLevel::Warn).swizzle())
+            // .valid(|valid| valid.is("e").is("error").map(|_| LogLevel::Error).swizzle())
+            // .valid(|valid| valid.is("f").is("fatal").map(|_| LogLevel::Fatal).swizzle())
         )
         .options(Options::all(true, true))
         .map(|(config, context, debug, host, log_level)| GlobalOptions {
             config,
             context,
-            debug,
+            debug: debug.unwrap_or_default(),
             host: host.unwrap_or_default(),
             log_level
         })

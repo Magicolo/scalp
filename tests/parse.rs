@@ -87,14 +87,27 @@ fn verb_with_no_option_allows_for_root_options_before_and_after() -> Result {
 #[test]
 fn boolean_option_swizzling() -> Result {
     let parser = Builder::new()
-        .option(|option| option.name("a").default(false))
-        .option(|option| option.name("b").default(false))
-        .option(|option| option.name("c").default(false))
+        .option(|option| option.name("a").swizzle().default(false))
+        .option(|option| option.name("b").swizzle().default(false))
+        .option(|option| option.name("c").swizzle().default(false))
         .build()?;
     assert_eq!(parser.parse_with(["-a"], [("", "")])?, (true, false, false));
     assert_eq!(parser.parse_with(["-ab"], [("", "")])?, (true, true, false));
     assert_eq!(parser.parse_with(["-abc"], [("", "")])?, (true, true, true));
     assert_eq!(parser.parse_with(["-ca"], [("", "")])?, (true, false, true));
     assert_eq!(parser.parse_with(["-bca"], [("", "")])?, (true, true, true));
+    Ok(())
+}
+
+#[test]
+fn invalid_swizzling() -> Result {
+    let parser = Builder::new()
+        .option(|option| option.name("a").swizzle().default(false))
+        .option(|option| option.name("b").default(false))
+        .build()?;
+    assert_eq!(parser.parse_with(["-a"], [("", "")]), Ok((true, false)));
+    assert_eq!(parser.parse_with(["-b"], [("", "")]), Ok((false, true)));
+    assert_eq!(parser.parse_with(["-ab"], [("", "")]), Err(Error::InvalidSwizzleOption('b')));
+    assert_eq!(parser.parse_with(["-ba"], [("", "")]), Err(Error::InvalidSwizzleOption('b')));
     Ok(())
 }

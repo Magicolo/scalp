@@ -4,7 +4,7 @@ use core::{
     mem::{replace, take},
     slice::from_ref,
 };
-use std::{borrow::Cow, fmt::Display, fs, ops::Deref};
+use std::{borrow::Cow, fmt::Display, fs, iter::from_fn, ops::Deref};
 use termion::style::{Bold, Faint, Italic, NoFaint, NoItalic, NoUnderline, Reset, Underline};
 
 const INDENTATION: &str = "  ";
@@ -84,10 +84,17 @@ impl<'a> Helper<'a> {
     }
 
     fn types(&mut self, metas: &[Meta], prefix: impl fmt::Display) -> Result<usize, fmt::Error> {
-        self.join(metas, prefix, ", ", |meta| match meta {
-            Meta::Type(value, _) => Some(Cow::Borrowed(value)),
-            _ => None,
-        })
+        let mut last = None;
+        for meta in visible(metas) {
+            if let Meta::Type(value, _) = meta {
+                last = Some(value);
+            }
+        }
+        if let Some(value) = last {
+            self.write(format_args!("{prefix}{value}"))
+        } else {
+            Ok(0)
+        }
     }
 
     fn versions(&mut self, metas: &[Meta], prefix: impl fmt::Display) -> Result<usize, fmt::Error> {
@@ -113,20 +120,14 @@ impl<'a> Helper<'a> {
     ) -> Result<usize, fmt::Error> {
         self.write_with(|helper| {
             let mut join = false;
-            let mut metas = metas.iter();
-            while let Some(meta) = metas.next() {
-                match meta {
-                    Meta::Hide => hide(metas.by_ref()),
-                    meta => {
-                        if let Some(value) = find(meta) {
-                            if replace(&mut join, true) {
-                                write!(helper.buffer, "{separator}")?;
-                            } else {
-                                write!(helper.buffer, "{prefix}")?;
-                            }
-                            write!(helper.buffer, "{value}")?;
-                        }
+            for meta in visible(metas) {
+                if let Some(value) = find(meta) {
+                    if replace(&mut join, true) {
+                        write!(helper.buffer, "{separator}")?;
+                    } else {
+                        write!(helper.buffer, "{prefix}")?;
                     }
+                    write!(helper.buffer, "{value}")?;
                 }
             }
             Ok(())
@@ -174,16 +175,13 @@ impl<'a> Helper<'a> {
     }
 
     fn help(&mut self, metas: &[Meta]) -> Result<(), fmt::Error> {
-        let mut metas = metas.iter();
         let mut join = false;
         let mut cursor = 0;
-        while let Some(meta) = metas.next() {
-            match meta {
-                Meta::Help(value) if !value.chars().all(char::is_whitespace) => {
+        for meta in visible(metas) {
+            if let Meta::Help(value) = meta {
+                if !value.chars().all(char::is_whitespace) {
                     self.wrap(value, "", "", &mut cursor, &mut join)?
                 }
-                Meta::Hide => hide(metas.by_ref()),
-                _ => {}
             }
         }
         Ok(())
@@ -195,8 +193,7 @@ impl<'a> Helper<'a> {
         (short, long, types): &mut (bool, bool, bool),
     ) -> Columns {
         let mut columns = Columns::default();
-        let mut metas = metas.iter();
-        while let Some(meta) = metas.next() {
+        for meta in visible(metas) {
             match meta {
                 Meta::Position if depth == 0 => {
                     columns.short += 3 + if replace(short, true) { 2 } else { 0 }
@@ -221,7 +218,6 @@ impl<'a> Helper<'a> {
                     columns.long = columns.long.max(child.long);
                     columns.types = columns.types.max(child.types);
                 }
-                Meta::Hide => hide(metas.by_ref()),
                 _ => {}
             }
         }
@@ -229,54 +225,36 @@ impl<'a> Helper<'a> {
     }
 
     fn tags(&mut self, metas: &[Meta]) -> Result<bool, fmt::Error> {
-        let mut name = "";
-        let mut many = false;
-        let mut required = false;
-        {
-            let mut metas = metas.iter();
-            while let Some(meta) = metas.next() {
-                match meta {
-                    Meta::Type(value, _) => {
-                        name = value;
-                        many = false;
-                    }
-                    Meta::Many(_) => many = true,
-                    Meta::Required => required = true,
-                    Meta::Hide => hide(metas.by_ref()),
-                    _ => {}
-                }
-            }
-        }
-
-        if name.is_empty() {
-            return Ok(false);
-        }
-
-        write!(self.buffer, "<")?;
-        if required {
-            write!(self.buffer, "required ")?;
-        }
-        write!(self.buffer, "{name}")?;
-        if many {
-            write!(self.buffer, " list")?;
-        }
-
-        self.join(metas, " = ", ", ", |meta| match meta {
-            Meta::Default(value) => Some(Cow::Borrowed(value)),
-            Meta::Environment(value) => Some(Cow::Borrowed(value)),
+        let pre = self.join(metas, "[", ", ", |meta| match meta {
+            Meta::Require => Some(Cow::Borrowed("require")),
+            Meta::Swizzle => Some(Cow::Borrowed("swizzle")),
+            Meta::Many(_) => Some(Cow::Borrowed("many")),
             _ => None,
         })?;
-        write!(self.buffer, ">")?;
-
-        Ok(true)
+        let prefix = if pre == 0 { "[" } else { ", " };
+        let post = self.join(
+            metas,
+            format_args!("{prefix}default: "),
+            ", ",
+            |meta| match meta {
+                Meta::Default(value) => Some(Cow::Borrowed(value)),
+                Meta::Environment(value) => Some(Cow::Owned(format!("${value}"))),
+                _ => None,
+            },
+        )?;
+        if pre + post > 0 {
+            write!(self.buffer, "]")?;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
     }
 
     fn node(&mut self, metas: &[Meta], depth: usize) -> Result<(), fmt::Error> {
         let mut option = 0;
         let columns = Self::columns(metas, 1, &mut (false, false, false));
         let mut helper = self.own();
-        let mut metas = metas.iter();
-        while let Some(meta) = metas.next() {
+        for meta in visible(metas) {
             match meta {
                 Meta::Help(value) => {
                     helper.indentation()?;
@@ -358,7 +336,6 @@ impl<'a> Helper<'a> {
                     }
                     writeln!(helper.buffer, "{Italic}{Faint}{buffer}{NoFaint}{NoItalic}")?;
                 }
-                Meta::Hide => hide(metas.by_ref()),
                 _ => {}
             }
         }
@@ -460,6 +437,21 @@ pub(crate) fn author(meta: &Meta, depth: usize) -> Option<String> {
     })
 }
 
+fn visible(metas: &[Meta]) -> impl Iterator<Item = &Meta> {
+    let mut metas = metas.iter();
+    from_fn(move || loop {
+        let meta = metas.next()?;
+        match meta {
+            Meta::Hide => loop {
+                if let Meta::Show = metas.next()? {
+                    break;
+                }
+            },
+            meta => return Some(meta),
+        }
+    })
+}
+
 fn join(meta: &Meta, depth: usize, find: impl Fn(&Meta) -> Option<Cow<str>>) -> Option<String> {
     fn descend(
         meta: &Meta,
@@ -487,12 +479,4 @@ fn join(meta: &Meta, depth: usize, find: impl Fn(&Meta) -> Option<Cow<str>>) -> 
     let mut buffer = String::new();
     descend(meta, depth, &mut buffer, &find).ok()?;
     Some(buffer)
-}
-
-fn hide<'a>(metas: impl Iterator<Item = &'a Meta>) {
-    for meta in metas {
-        if let Meta::Show = meta {
-            return;
-        }
-    }
 }

@@ -1,7 +1,7 @@
 use core::fmt;
 use std::{borrow::Cow, collections::VecDeque, error};
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum Error {
     Help(Option<String>),
     Version(Option<String>),
@@ -15,7 +15,7 @@ pub enum Error {
     ExcessArguments(VecDeque<Cow<'static, str>>),
     DuplicateName(String),
     Format(fmt::Error),
-    Text(Cow<'static, str>),
+    Other(Cow<'static, str>),
     FailedToParseEnvironmentVariable(
         Cow<'static, str>,
         Cow<'static, str>,
@@ -27,7 +27,6 @@ pub enum Error {
         Option<Cow<'static, str>>,
         Option<Cow<'static, str>>,
     ),
-
     DuplicateNode,
     GroupNestingLimitOverflow,
     InvalidIndex(usize),
@@ -150,9 +149,21 @@ impl fmt::Display for Error {
             Error::InvalidSwizzleOption(value) => write!(f, "Invalid swizzle option '{value}'. A valid swizzle option is tagged for swizzling, has a short name and is of type 'boolean'.")?,
 
             Error::Format(error) => error.fmt(f)?,
-            Error::Text(error) => error.fmt(f)?,
+            Error::Other(error) => error.fmt(f)?,
         }
         Ok(())
+    }
+}
+
+impl<T: fmt::Display> From<&T> for Error {
+    fn from(value: &T) -> Self {
+        Self::from(format!("{value}"))
+    }
+}
+
+impl<T: fmt::Display> From<&mut T> for Error {
+    fn from(value: &mut T) -> Self {
+        Self::from(format!("{value}"))
     }
 }
 
@@ -176,6 +187,6 @@ impl From<String> for Error {
 
 impl From<Cow<'static, str>> for Error {
     fn from(value: Cow<'static, str>) -> Self {
-        Error::Text(value)
+        Error::Other(value)
     }
 }

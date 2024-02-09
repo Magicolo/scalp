@@ -56,13 +56,13 @@ pub struct Value<T>(pub(crate) PhantomData<T>);
 pub struct Function<F>(pub(crate) F);
 
 #[derive(Debug)]
-pub struct Many<P, I, N, F>(
-    pub(crate) P,
-    pub(crate) Option<NonZeroUsize>,
-    pub(crate) N,
-    pub(crate) F,
-    pub(crate) PhantomData<I>,
-);
+pub struct Many<P, I, N, F> {
+    pub(crate) parse: P,
+    pub(crate) per: Option<NonZeroUsize>,
+    pub(crate) new: N,
+    pub(crate) add: F,
+    pub(crate) _marker: PhantomData<I>,
+}
 
 #[derive(Debug)]
 pub struct Require<P>(pub(crate) P);
@@ -123,14 +123,17 @@ impl<'a> State<'a> {
     }
 
     fn key(&mut self, swizzles: &HashSet<char>) -> Result<Option<Cow<'static, str>>, Error> {
-        let Some(mut key) = self.arguments.pop_front() else {
+        let Some(key) = self.arguments.pop_front() else {
             return Ok(None);
         };
 
         self.index = 0;
         self.key = None;
-        if key.starts_with(self.short) && !key.starts_with(self.long) {
-            for key in key.chars().skip(self.short.len() + 1) {
+        if key.len() > self.short.len() + 1
+            && key.starts_with(self.short)
+            && !key.starts_with(self.long)
+        {
+            for key in key.chars().skip(self.short.len()) {
                 if swizzles.contains(&key) {
                     self.arguments
                         .push_front(Cow::Owned(format!("{}{key}", self.short)));
@@ -138,9 +141,10 @@ impl<'a> State<'a> {
                     return Err(Error::InvalidSwizzleOption(key));
                 }
             }
-            key.to_mut().truncate(self.short.len() + 1);
+            self.key(swizzles)
+        } else {
+            Ok(Some(key))
         }
-        Ok(Some(key))
     }
 
     fn missing_option(&self) -> Error {
@@ -304,7 +308,7 @@ impl<P: Parse> Parse for Node<P> {
             }
 
             let mut states = (state, states.1.own());
-            let mut at = 0;
+            let mut positions = self.indices.positions.iter().copied();
             while let Some(key) = states.1.key(&self.indices.swizzles)? {
                 match self.indices.indices.get(&key).copied() {
                     Some(HELP) => return Err(Error::Help(None)),
@@ -318,14 +322,13 @@ impl<P: Parse> Parse for Node<P> {
                             states.1.with(Some(&self.meta), Some(&key), Some(index)),
                         ))?
                     }
-                    None => match self.indices.positions.get(at).copied() {
+                    None => match positions.next() {
                         Some(index) => {
                             states.1.restore(key);
                             states.0 = self.parse.parse((
                                 states.0,
                                 states.1.with(Some(&self.meta), None, Some(index)),
                             ))?;
-                            at += 1;
                         }
                         None => {
                             let suggestions = Spell::new().suggest(
@@ -528,7 +531,7 @@ impl<T: 'static, F: Fn(&str) -> Option<T>> Parse for Function<F> {
     }
 }
 
-impl<T, P: Parse<Value = Option<T>>, I, N: Fn() -> I, F: Fn(I, T) -> I> Parse for Many<P, I, N, F> {
+impl<T, P: Parse<Value = Option<T>>, I, N: Fn() -> I, F: Fn(&mut I, T)> Parse for Many<P, I, N, F> {
     type State = Option<I>;
     type Value = Option<I>;
 
@@ -537,27 +540,27 @@ impl<T, P: Parse<Value = Option<T>>, I, N: Fn() -> I, F: Fn(I, T) -> I> Parse fo
     }
 
     fn parse(&self, mut states: (Self::State, State)) -> Result<Self::State, Error> {
-        let mut items = states.0.unwrap_or_else(&self.2);
+        let mut items = states.0.unwrap_or_else(&self.new);
         let mut index = 0;
-        let count = self.1.map_or(usize::MAX, NonZeroUsize::get);
+        let count = self.per.map_or(usize::MAX, NonZeroUsize::get);
         let error = loop {
             if index >= count {
                 break None;
             }
-            let state = match self.0.initialize(states.1.own()) {
+            let state = match self.parse.initialize(states.1.own()) {
                 Ok(state) => state,
                 Err(error) => break Some(error),
             };
-            let state = match self.0.parse((state, states.1.own())) {
+            let state = match self.parse.parse((state, states.1.own())) {
                 Ok(state) => state,
                 Err(error) => break Some(error),
             };
-            let item = match self.0.finalize((state, states.1.own())) {
+            let item = match self.parse.finalize((state, states.1.own())) {
                 Ok(Some(item)) => item,
                 Ok(None) => break None,
                 Err(error) => break Some(error),
             };
-            items = self.3(items, item);
+            (self.add)(&mut items, item);
             index += 1;
         };
         if index == 0 {

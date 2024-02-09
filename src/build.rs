@@ -17,7 +17,7 @@ use core::{
     num::NonZeroUsize,
     str::FromStr,
 };
-use std::{borrow::Cow, collections::hash_map::Entry};
+use std::{borrow::Cow, collections::hash_map::Entry, convert::Infallible};
 
 pub struct Builder<S, P = At<()>> {
     case: Case,
@@ -28,9 +28,20 @@ pub struct Builder<S, P = At<()>> {
     scope: S,
 }
 
+pub struct Unit;
+
 pub trait Flag {}
+
 impl Flag for Option<bool> {}
 impl Flag for bool {}
+
+impl FromStr for Unit {
+    type Err = Infallible;
+
+    fn from_str(_: &str) -> Result<Self, Self::Err> {
+        Ok(Unit)
+    }
+}
 
 impl default::Default for Builder<scope::Root> {
     fn default() -> Self {
@@ -338,7 +349,7 @@ impl<S, P> Builder<S, P> {
         } else {
             self.buffer.clear();
             self.buffer.push_str(&self.long);
-            self.case.convert_in(value, &mut self.buffer)?;
+            self.buffer.extend(self.case.convert(value));
             Name::Long
         };
 
@@ -362,7 +373,7 @@ impl<S, P> Builder<S, P> {
             Name::Short
         } else {
             self.buffer.clear();
-            self.case.convert_in(value, &mut self.buffer)?;
+            self.buffer.extend(self.case.convert(value));
             Name::Long
         };
         let inner = outer.to_mut();
@@ -388,6 +399,34 @@ impl<S, P> Builder<S, P> {
         P: Parse,
     {
         self.map_parse(|parse| Map(parse, map))
+    }
+
+    pub fn filter(
+        self,
+        filter: impl Fn(&P::Value) -> bool,
+    ) -> Builder<S, Map<P, impl Fn(P::Value) -> Result<Option<P::Value>, Error>>>
+    where
+        P: Parse,
+    {
+        self.map(move |value| if filter(&value) { Some(value) } else { None })
+    }
+
+    pub fn filter_or(
+        self,
+        error: impl Into<Error>,
+        filter: impl Fn(&P::Value) -> bool,
+    ) -> Builder<S, Map<P, impl Fn(P::Value) -> Result<P::Value, Error>>>
+    where
+        P: Parse,
+    {
+        let error = error.into();
+        self.try_map(move |value| {
+            if filter(&value) {
+                Ok(value)
+            } else {
+                Err(error.clone())
+            }
+        })
     }
 
     pub fn or<T>(
@@ -554,7 +593,7 @@ impl<S: Scope, P> Builder<S, P> {
         } else {
             name
         };
-        let name = Cow::Owned(self.case.convert(name));
+        let name = Cow::Owned(self.case.convert(name).collect());
         self.meta(Meta::Type(name, identifier))
     }
 }
@@ -610,27 +649,8 @@ impl<S: scope::Parent, P> Builder<S, P> {
     where
         P: Stack,
     {
-        // TODO: Errors should be able to access the 'Meta::Type' associated with this option.
-        // 'State::with' doesn't seem to work because this is not a 'Node'.
         let (scope, old, option) = self.swap_both(scope::Option::new(), Value(PhantomData));
-        let (option, mut builder) = build(option.type_name::<T>()).swap_scope(scope);
-        let meta = Meta::from(option);
-        builder.scope.push(meta.clone(1));
-        builder.try_map_parse(|new| Ok(old?.push(With { meta, parse: new })))
-    }
-
-    pub fn option_with<T: 'static, F: Fn(&str) -> Option<T>, Q>(
-        self,
-        parse: F,
-        build: impl FnOnce(Builder<scope::Option, Function<F>>) -> Builder<scope::Option, Q>,
-    ) -> Builder<S, P::Push<With<Q>>>
-    where
-        P: Stack,
-    {
-        // TODO: Errors should be able to access the 'Meta::Type' associated with this option.
-        // 'State::with' doesn't seem to work because this is not a 'Node'.
-        let (scope, old, option) = self.swap_both(scope::Option::new(), Function(parse));
-        let (option, mut builder) = build(option.type_name::<T>()).swap_scope(scope);
+        let (option, mut builder) = build(option.parse::<T>()).swap_scope(scope);
         let meta = Meta::from(option);
         builder.scope.push(meta.clone(1));
         builder.try_map_parse(|new| Ok(old?.push(With { meta, parse: new })))
@@ -769,6 +789,19 @@ impl<P> Builder<scope::Verb, P> {
     }
 }
 
+impl Builder<scope::Option, Value<Unit>> {
+    pub fn parse<T: FromStr + 'static>(self) -> Builder<scope::Option, Value<T>> {
+        self.type_name::<T>().map_parse(|_| Value(PhantomData))
+    }
+
+    pub fn parse_with<T: 'static, F: Fn(&str) -> Result<T, Error>>(
+        self,
+        parse: F,
+    ) -> Builder<scope::Option, Function<F>> {
+        self.type_name::<T>().map_parse(|_| Function(parse))
+    }
+}
+
 impl<P> Builder<scope::Option, P> {
     pub fn name(mut self, name: impl Into<Cow<'static, str>>) -> Self {
         let name = name.into();
@@ -785,6 +818,8 @@ impl<P> Builder<scope::Option, P> {
     pub fn position(self) -> Self {
         self.meta(Meta::Position)
     }
+
+    // pub fn valid(self, )
 
     pub fn swizzle(self) -> Self
     where
@@ -806,16 +841,16 @@ impl<P> Builder<scope::Option, P> {
         self.default_with(move || default.clone(), move |_| help)
     }
 
-    pub fn default_with<T, F: Fn() -> T>(
+    pub fn default_with<T, F: Fn() -> T, H: Into<Cow<'static, str>>>(
         self,
         default: F,
-        help: impl FnOnce(Case) -> String,
+        help: impl FnOnce(Case) -> H,
     ) -> Builder<scope::Option, Default<P, F>>
     where
         P: Parse<Value = Option<T>>,
     {
         let case = self.case;
-        self.meta(Meta::Default(Cow::Owned(help(case))))
+        self.meta(Meta::Default(help(case).into()))
             .map_parse(|parse| Default(parse, default))
     }
 
@@ -843,32 +878,36 @@ impl<P> Builder<scope::Option, P> {
     }
 
     pub fn require(self) -> Builder<scope::Option, Require<P>> {
-        self.meta(Meta::Required).map_parse(Require)
+        self.meta(Meta::Require).map_parse(Require)
     }
 
     pub fn many<T, I: default::Default + Extend<T>>(
         self,
-    ) -> Builder<scope::Option, Many<P, I, impl Fn() -> I, impl Fn(I, T) -> I>>
+    ) -> Builder<scope::Option, Many<P, I, impl Fn() -> I, impl Fn(&mut I, T)>>
     where
         P: Parse<Value = Option<T>>,
     {
-        self.many_with(Some(NonZeroUsize::MIN), I::default, |mut items, item| {
-            items.extend([item]);
-            items
+        self.many_with(Some(NonZeroUsize::MIN), I::default, |items, item| {
+            items.extend([item])
         })
     }
 
-    pub fn many_with<T, I, N: Fn() -> I, F: Fn(I, T) -> I>(
+    pub fn many_with<T, I, N: Fn() -> I, F: Fn(&mut I, T)>(
         self,
         per: Option<NonZeroUsize>,
         new: N,
-        fold: F,
+        add: F,
     ) -> Builder<scope::Option, Many<P, I, N, F>>
     where
         P: Parse<Value = Option<T>>,
     {
-        self.meta(Meta::Many(per))
-            .map_parse(|parse| Many(parse, per, new, fold, PhantomData))
+        self.meta(Meta::Many(per)).map_parse(|parse| Many {
+            parse,
+            per,
+            new,
+            add,
+            _marker: PhantomData,
+        })
     }
 }
 
