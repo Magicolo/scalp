@@ -80,11 +80,11 @@ fn fails_to_parse_invalid_value() -> Result {
 fn verb_with_no_option_allows_for_root_options_before_and_after() -> Result {
     let parser = Builder::new()
         .option(|option| option.name("a").default(1))
-        .option(|option| option.name("b").default(1))
+        .option(|option| option.name("b").default(4))
         .verb(|verb| verb.name("c"))
         .build()?;
-    let result = parser.parse_with(["-a", "1", "c", "-b", "2"], [("", "")])?;
-    assert_eq!(result, (1, 2, Some(())));
+    let result = parser.parse_with(["-a", "2", "c", "-b", "3"], [("", "")])?;
+    assert_eq!(result, (2, 3, Some(())));
     Ok(())
 }
 
@@ -151,7 +151,6 @@ fn parses_enum_value() -> Result {
         .option::<Casing, _>(|option| {
             option
                 .name("c")
-                .valid("same")
                 .valid("c(amel-case)?")
                 .valid("p(ascal-case)?")
                 .valid("s(nake-case)?")
@@ -159,10 +158,6 @@ fn parses_enum_value() -> Result {
         })
         .map(|(case,)| case)
         .build()?;
-    assert_eq!(
-        parser.parse_with(["-c", "same"], [("", "")]),
-        Ok(Casing::Same)
-    );
     assert_eq!(
         parser.parse_with(["-c", "camel-case"], [("", "")]),
         Ok(Casing::camelCase)
@@ -188,8 +183,8 @@ fn parses_enum_value() -> Result {
         Ok(Casing::snake_case)
     );
     assert_eq!(
-        parser.parse_with(["-c", "boba"], [("", "")]),
-        Err(Error::InvalidOptionValue("boba".into(), Some("-c".into())))
+        parser.parse_with(["-c", "same"], [("", "")]),
+        Err(Error::InvalidOptionValue("same".into(), Some("-c".into())))
     );
     Ok(())
 }

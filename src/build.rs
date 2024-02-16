@@ -643,7 +643,7 @@ impl<S: scope::Node, P> Builder<S, P> {
         );
         let (option, mut builder) = build(option.parse::<T>()).swap_scope(scope);
         let set = RegexSet::new(option.iter().filter_map(|meta| match meta {
-            Meta::Valid(value) => Some(value),
+            Meta::Valid(value) => Some(format!("^{value}$")),
             _ => None,
         }));
         let meta = Meta::from(option);

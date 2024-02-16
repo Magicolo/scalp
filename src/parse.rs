@@ -120,22 +120,21 @@ impl<'a> State<'a> {
 
         self.index = None;
         self.key = None;
-        if key.len() > self.short.len() + 1
-            && key.starts_with(self.short)
-            && !key.starts_with(self.long)
-        {
-            for key in key.chars().skip(self.short.len()) {
-                if swizzles.contains(&key) {
-                    self.arguments
-                        .push_front(Cow::Owned(format!("{}{key}", self.short)));
-                } else {
-                    return Err(Error::InvalidSwizzleOption(key));
+        if key.starts_with(self.short) && !key.starts_with(self.long) {
+            let counts = (key.chars().count(), self.short.chars().count());
+            if counts.0 > counts.1 + 1 {
+                for key in key.chars().skip(counts.1) {
+                    if swizzles.contains(&key) {
+                        self.arguments
+                            .push_front(Cow::Owned(format!("{}{key}", self.short)));
+                    } else {
+                        return Err(Error::InvalidSwizzleOption(key));
+                    }
                 }
+                return self.key(swizzles);
             }
-            self.key(swizzles)
-        } else {
-            Ok(Some(key))
         }
+        Ok(Some(key))
     }
 
     fn missing_option(&self) -> Error {
@@ -513,13 +512,12 @@ impl<T: FromStr> Parse for Value<T> {
             },
             _ => return Err(state.missing_option()),
         };
-        if let Some(set) = state.set {
-            if !set.is_match(&argument) {
-                return Err(state.invalid_option(argument));
-            }
-        }
         match (argument.parse::<T>(), &self.tag, &mut state.index) {
-            (Ok(value), _, _) => Ok(Some(value)),
+            (Ok(value), _, _) => match state.set {
+                Some(set) if set.is_empty() || set.is_match(&argument) => Ok(Some(value)),
+                Some(_) => Err(state.invalid_option(argument)),
+                None => Ok(Some(value)),
+            },
             (Err(_), Some(tag), Some(index)) if *index == 0 => {
                 state.arguments.push_front(argument);
                 *index += 1;

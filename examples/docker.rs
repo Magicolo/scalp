@@ -241,7 +241,6 @@ fn global_options(builder: Builder<scope::Group>) -> Builder<scope::Group, impl 
             .name("D")
             .name("debug")
             .help("Enable debug mode.")
-            .swizzle()
         )
         .option(|option| option
             .name("H")
