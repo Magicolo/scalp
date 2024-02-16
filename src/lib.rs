@@ -19,6 +19,9 @@ pub use crate::{
 
 /*
     TODO:
+    - Favor `Deserialize` over `FromStr`.
+        - Define a 'MetaDeserializer' which will be used to collect meta data from a type `T: Deserialize` (including variant names and more).
+        - For enums, build a map between case-converted keys and variant names.
     - Generate usage string automatically.
         - Usage: {verb (for root use the root name)} [position options (if any)] [named options (if any)] {sub-command (if any)}
     - Support for styled formatting out of the box; use a feature for termion?

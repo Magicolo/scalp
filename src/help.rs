@@ -86,7 +86,7 @@ impl<'a> Helper<'a> {
     fn types(&mut self, metas: &[Meta], prefix: impl fmt::Display) -> Result<usize, fmt::Error> {
         let mut last = None;
         for meta in visible(metas) {
-            if let Meta::Type(value, _) = meta {
+            if let Meta::Type(value) = meta {
                 last = Some(value);
             }
         }
@@ -204,7 +204,7 @@ impl<'a> Helper<'a> {
                 Meta::Name(Name::Long, value) if depth == 0 => {
                     columns.long += value.len() + if replace(long, true) { 2 } else { 0 }
                 }
-                Meta::Type(value, _) if depth == 0 => {
+                Meta::Type(value) if depth == 0 => {
                     columns.types += value.len() + if replace(types, true) { 2 } else { 0 }
                 }
                 Meta::Root(metas)
@@ -225,24 +225,34 @@ impl<'a> Helper<'a> {
     }
 
     fn tags(&mut self, metas: &[Meta]) -> Result<bool, fmt::Error> {
-        let pre = self.join(metas, "[", ", ", |meta| match meta {
+        let tags = self.join(metas, "[", ", ", |meta| match meta {
             Meta::Require => Some(Cow::Borrowed("require")),
             Meta::Swizzle => Some(Cow::Borrowed("swizzle")),
             Meta::Many(_) => Some(Cow::Borrowed("many")),
             _ => None,
         })?;
-        let prefix = if pre == 0 { "[" } else { ", " };
-        let post = self.join(
+        let prefix = if tags == 0 { "[" } else { ", " };
+        let valids = self.join(
+            metas,
+            format_args!("{prefix}valid: "),
+            " | ",
+            |meta| match meta {
+                Meta::Valid(value) => Some(Cow::Borrowed(value)),
+                _ => None,
+            },
+        )?;
+        let prefix = if valids == 0 { "[" } else { ", " };
+        let defaults = self.join(
             metas,
             format_args!("{prefix}default: "),
-            ", ",
+            " | ",
             |meta| match meta {
                 Meta::Default(value) => Some(Cow::Borrowed(value)),
                 Meta::Environment(value) => Some(Cow::Owned(format!("${value}"))),
                 _ => None,
             },
         )?;
-        if pre + post > 0 {
+        if tags + valids + defaults > 0 {
             write!(self.buffer, "]")?;
             Ok(true)
         } else {
@@ -334,7 +344,7 @@ impl<'a> Helper<'a> {
                         writeln!(helper.buffer)?;
                         helper.indentation()?;
                     }
-                    writeln!(helper.buffer, "{Italic}{Faint}{buffer}{NoFaint}{NoItalic}")?;
+                    writeln!(helper.buffer, "{Faint}{buffer}{NoFaint}")?;
                 }
                 _ => {}
             }
@@ -406,7 +416,7 @@ pub(crate) fn help(meta: &Meta) -> Option<String> {
     let mut writer = Helper {
         buffer: &mut buffer,
         indent: 0,
-        width: term_size::dimensions().map_or(96, |pair| pair.0 - 25),
+        width: term_size::dimensions().map_or(96, |pair| pair.0 - 16),
     };
     writer.node(from_ref(meta), 0).ok()?;
     Some(buffer)

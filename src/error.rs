@@ -1,7 +1,7 @@
 use core::fmt;
 use std::{borrow::Cow, collections::VecDeque, error};
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq)]
 pub enum Error {
     Help(Option<String>),
     Version(Option<String>),
@@ -15,6 +15,7 @@ pub enum Error {
     ExcessArguments(VecDeque<Cow<'static, str>>),
     DuplicateName(String),
     Format(fmt::Error),
+    Regex(regex::Error),
     Other(Cow<'static, str>),
     FailedToParseEnvironmentVariable(
         Cow<'static, str>,
@@ -30,8 +31,9 @@ pub enum Error {
     DuplicateNode,
     GroupNestingLimitOverflow,
     InvalidIndex(usize),
-    InvalidOptionName(String),
-    InvalidVerbName(String),
+    MissingIndex,
+    InvalidOptionName(Cow<'static, str>),
+    InvalidVerbName(Cow<'static, str>),
     MissingOptionNameOrPosition,
     MissingVerbName,
     FailedToParseArguments,
@@ -39,6 +41,9 @@ pub enum Error {
     InvalidLongPrefix(Cow<'static, str>),
     MissingShortOptionNameForSwizzling,
     InvalidSwizzleOption(char),
+    InvalidOptionType(Cow<'static, str>),
+    InvalidInitialization,
+    InvalidOptionValue(Cow<'static, str>, Option<Cow<'static, str>>),
 }
 
 impl error::Error for Error {}
@@ -138,8 +143,17 @@ impl fmt::Display for Error {
             Error::InvalidLongPrefix(prefix) => write!(f, "Invalid long prefix '{prefix}'. A valid long prefix is non-empty, contains only non-alpha-numeric characters and differs from the short prefix.")?,
             Error::DuplicateName(name) => write!(f, "Duplicate name '{name}'.")?,
             Error::InvalidIndex(index) => write!(f, "Invalid index '{index}'.")?,
+            Error::MissingIndex => write!(f, "Missing index.")?,
             Error::InvalidVerbName(name) => write!(f, "Invalid verb name '{name}'. A valid verb name is non-empty and contains only ascii characters.")?,
             Error::InvalidOptionName(name) => write!(f, "Invalid option name '{name}'. A valid option name is non-empty and contains only ascii characters.")?,
+            Error::InvalidOptionType(type_name) => write!(f, "Invalid option type '{type_name}'.")?,
+            Error::InvalidOptionValue(value, name) => {
+                write!(f, "Invalid value '{value}'")?;
+                if let Some(name) = name {
+                    write!(f, " for option '{name}'")?;
+                }
+                write!(f, ".")?;
+            }
             Error::DuplicateNode => write!(f, "Duplicate node.")?,
             Error::GroupNestingLimitOverflow => write!(f, "Group nesting limit overflow.")?,
             Error::MissingOptionNameOrPosition => write!(f, "Missing name or position for option.")?,
@@ -147,8 +161,10 @@ impl fmt::Display for Error {
             Error::FailedToParseArguments => write!(f, "Failed to parse arguments.")?,
             Error::MissingShortOptionNameForSwizzling => write!(f, "Missing short option name for swizzling. A valid short option name has only a single ascii character.")?,
             Error::InvalidSwizzleOption(value) => write!(f, "Invalid swizzle option '{value}'. A valid swizzle option is tagged for swizzling, has a short name and is of type 'boolean'.")?,
+            Error::InvalidInitialization => write!(f, "Invalid initialization.")?,
 
             Error::Format(error) => error.fmt(f)?,
+            Error::Regex(error) => error.fmt(f)?,
             Error::Other(error) => error.fmt(f)?,
         }
         Ok(())
@@ -170,6 +186,12 @@ impl<T: fmt::Display> From<&mut T> for Error {
 impl From<fmt::Error> for Error {
     fn from(error: fmt::Error) -> Self {
         Error::Format(error)
+    }
+}
+
+impl From<regex::Error> for Error {
+    fn from(error: regex::Error) -> Self {
+        Error::Regex(error)
     }
 }
 

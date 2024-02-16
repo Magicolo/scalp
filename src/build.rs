@@ -1,26 +1,23 @@
+use regex::RegexSet;
+
 use crate::{
     case::Case,
     error::Error,
     meta::{Meta, Name, Options},
     parse::{
-        Any, At, Default, Environment, Function, Indices, Many, Map, Node, Parse, Parser, Require,
-        Value, With,
+        Any, At, Default, Environment, Indices, Many, Map, Node, Parse, Parser, Require, Value,
+        With,
     },
     scope::{self, Scope},
     stack::Stack,
     AUTHOR, BREAK, HELP, LICENSE, MAXIMUM, SHIFT, VERSION,
 };
-use core::{
-    any::{type_name, TypeId},
-    default, fmt,
-    marker::PhantomData,
-    num::NonZeroUsize,
-    str::FromStr,
-};
-use std::{borrow::Cow, collections::hash_map::Entry, convert::Infallible};
+use core::{any::TypeId, default, fmt, marker::PhantomData, num::NonZeroUsize, str::FromStr};
+use std::{any, borrow::Cow, collections::hash_map::Entry, convert::Infallible};
 
 pub struct Builder<S, P = At<()>> {
     case: Case,
+    tag: Cow<'static, str>,
     short: Cow<'static, str>,
     long: Cow<'static, str>,
     buffer: String,
@@ -160,7 +157,7 @@ impl<S, P> Builder<S, P> {
 
     fn descend_verb(
         &mut self,
-        metas: &mut Vec<Meta>,
+        metas: &[Meta],
         indices: &mut Indices,
         index: usize,
     ) -> Result<(), Error> {
@@ -184,7 +181,7 @@ impl<S, P> Builder<S, P> {
 
     fn descend_option(
         &mut self,
-        metas: &mut Vec<Meta>,
+        metas: &[Meta],
         indices: &mut Indices,
         index: usize,
     ) -> Result<(), Error> {
@@ -333,26 +330,45 @@ impl<S, P> Builder<S, P> {
         }
     }
 
+    fn extend_name(&mut self, name: &str, prefix: bool) -> Option<Name> {
+        self.buffer.clear();
+        if name.len() == 1 {
+            if prefix {
+                self.buffer.push_str(&self.short);
+            }
+            self.extend_letters(name.chars())
+        } else {
+            if prefix {
+                self.buffer.push_str(&self.long);
+            }
+            self.extend_letters(self.case.convert(name))
+        }
+    }
+
+    fn extend_letters(&mut self, letters: impl IntoIterator<Item = char>) -> Option<Name> {
+        let start = self.buffer.len();
+        for letter in letters {
+            if letter.is_whitespace() || !letter.is_ascii() {
+                return None;
+            } else {
+                self.buffer.push(letter);
+            }
+        }
+        match self.buffer.len() - start {
+            0 => None,
+            1 => Some(Name::Short),
+            _ => Some(Name::Long),
+        }
+    }
+
     fn option_name(
         &mut self,
         name: impl Into<Cow<'static, str>>,
     ) -> Result<(Name, Cow<'static, str>), Error> {
         let mut outer = name.into();
-        let value = outer.trim();
-        let name = if value.is_empty() || !value.chars().all(|letter| letter.is_ascii()) {
-            return Err(Error::InvalidOptionName(outer.to_string()));
-        } else if value.len() == 1 {
-            self.buffer.clear();
-            self.buffer.push_str(&self.short);
-            self.buffer.push_str(value);
-            Name::Short
-        } else {
-            self.buffer.clear();
-            self.buffer.push_str(&self.long);
-            self.buffer.extend(self.case.convert(value));
-            Name::Long
+        let Some(name) = self.extend_name(&outer, true) else {
+            return Err(Error::InvalidOptionName(outer));
         };
-
         let inner = outer.to_mut();
         inner.clear();
         inner.push_str(&self.buffer);
@@ -364,17 +380,8 @@ impl<S, P> Builder<S, P> {
         name: impl Into<Cow<'static, str>>,
     ) -> Result<(Name, Cow<'static, str>), Error> {
         let mut outer = name.into();
-        let value = outer.trim();
-        let name = if value.is_empty() || !value.chars().all(|letter| letter.is_ascii()) {
-            return Err(Error::InvalidVerbName(outer.to_string()));
-        } else if value.len() == 1 {
-            self.buffer.clear();
-            self.buffer.push_str(value);
-            Name::Short
-        } else {
-            self.buffer.clear();
-            self.buffer.extend(self.case.convert(value));
-            Name::Long
+        let Some(name) = self.extend_name(&outer, false) else {
+            return Err(Error::InvalidVerbName(outer));
         };
         let inner = outer.to_mut();
         inner.clear();
@@ -490,6 +497,7 @@ impl<S, P> Builder<S, P> {
     ) -> Builder<T, Q> {
         Builder {
             case: self.case,
+            tag: self.tag,
             short: self.short,
             long: self.long,
             buffer: self.buffer,
@@ -503,6 +511,7 @@ impl<S, P> Builder<S, P> {
             self.scope,
             Builder {
                 case: self.case,
+                tag: self.tag,
                 short: self.short,
                 long: self.long,
                 buffer: self.buffer,
@@ -518,6 +527,7 @@ impl<S, P> Builder<S, P> {
             self.parse,
             Builder {
                 case: self.case,
+                tag: self.tag,
                 short: self.short,
                 long: self.long,
                 buffer: self.buffer,
@@ -566,39 +576,9 @@ impl<S: Scope, P> Builder<S, P> {
     fn meta(self, meta: Meta) -> Self {
         self.try_meta(Ok(meta))
     }
-
-    fn type_name<T: 'static>(self) -> Self {
-        macro_rules! is {
-            ($left: expr $(, $rights: ident)+) => {
-                $($left == TypeId::of::<$rights>() || $left == TypeId::of::<Option<$rights>>() ||)+ false
-            };
-        }
-
-        let name = type_name::<T>();
-        let identifier = TypeId::of::<T>();
-        let Some(name) = name.split('<').next() else {
-            return self;
-        };
-        let Some(name) = name.split(':').last() else {
-            return self;
-        };
-        let name = if is!(identifier, bool) {
-            "boolean"
-        } else if is!(identifier, u8, u16, u32, u64, u128, usize) {
-            "natural number"
-        } else if is!(identifier, i8, i16, i32, i64, i128, isize) {
-            "integer number"
-        } else if is!(identifier, f32, f64) {
-            "rational number"
-        } else {
-            name
-        };
-        let name = Cow::Owned(self.case.convert(name).collect());
-        self.meta(Meta::Type(name, identifier))
-    }
 }
 
-impl<S: scope::Parent, P> Builder<S, P> {
+impl<S: scope::Node, P> Builder<S, P> {
     pub fn usage(self, usage: impl Into<Cow<'static, str>>) -> Self {
         let usage = usage.into();
         if usage.chars().all(char::is_whitespace) {
@@ -649,11 +629,32 @@ impl<S: scope::Parent, P> Builder<S, P> {
     where
         P: Stack,
     {
-        let (scope, old, option) = self.swap_both(scope::Option::new(), Value(PhantomData));
+        let tag = self.tag.clone();
+        let (scope, old, option) = self.swap_both(
+            scope::Option::new(),
+            Value {
+                tag: if TypeId::of::<T>() == TypeId::of::<bool>() {
+                    Some(tag)
+                } else {
+                    None
+                },
+                _marker: PhantomData,
+            },
+        );
         let (option, mut builder) = build(option.parse::<T>()).swap_scope(scope);
+        let set = RegexSet::new(option.iter().filter_map(|meta| match meta {
+            Meta::Valid(value) => Some(value),
+            _ => None,
+        }));
         let meta = Meta::from(option);
         builder.scope.push(meta.clone(1));
-        builder.try_map_parse(|new| Ok(old?.push(With { meta, parse: new })))
+        builder.try_map_parse(|new| {
+            Ok(old?.push(With {
+                parse: new,
+                set: set?,
+                meta,
+            }))
+        })
     }
 
     pub fn options(self, options: impl IntoIterator<Item = Options>) -> Self {
@@ -664,16 +665,18 @@ impl<S: scope::Parent, P> Builder<S, P> {
     }
 }
 
-impl<S: scope::Node, P> Builder<S, P> {
+impl<S: scope::Version, P> Builder<S, P> {
     pub fn version(self, version: impl Into<Cow<'static, str>>) -> Self {
         self.meta(Meta::Version(version.into()))
     }
 }
 
 impl Builder<scope::Root> {
-    pub const fn new() -> Self {
+    pub fn new() -> Self {
+        let case = Case::Kebab { upper: false };
         Self {
-            case: Case::Kebab { upper: false },
+            case,
+            tag: case.convert("true").collect(),
             short: Cow::Borrowed("-"),
             long: Cow::Borrowed("--"),
             buffer: String::new(),
@@ -684,6 +687,7 @@ impl Builder<scope::Root> {
 
     pub fn case(mut self, case: Case) -> Self {
         self.case = case;
+        self.tag = case.convert("true").collect();
         self
     }
 
@@ -780,46 +784,38 @@ impl<P> Builder<scope::Group, P> {
 impl<P> Builder<scope::Verb, P> {
     pub fn name(mut self, name: impl Into<Cow<'static, str>>) -> Self {
         let name = name.into();
-        if name.chars().all(char::is_whitespace) {
-            self
-        } else {
-            let meta = self.verb_name(name).map(|pair| Meta::Name(pair.0, pair.1));
-            self.try_meta(meta)
-        }
+        let meta = self.verb_name(name).map(|pair| Meta::Name(pair.0, pair.1));
+        self.try_meta(meta)
     }
 }
 
 impl Builder<scope::Option, Value<Unit>> {
     pub fn parse<T: FromStr + 'static>(self) -> Builder<scope::Option, Value<T>> {
-        self.type_name::<T>().map_parse(|_| Value(PhantomData))
-    }
-
-    pub fn parse_with<T: 'static, F: Fn(&str) -> Result<T, Error>>(
-        self,
-        parse: F,
-    ) -> Builder<scope::Option, Function<F>> {
-        self.type_name::<T>().map_parse(|_| Function(parse))
+        let case = self.case;
+        self.meta(Meta::Type(type_name::<T>(case)))
+            .map_parse(|_| Value {
+                tag: if TypeId::of::<T>() == TypeId::of::<bool>() {
+                    Some(Cow::Borrowed("true"))
+                } else {
+                    None
+                },
+                _marker: PhantomData,
+            })
     }
 }
 
 impl<P> Builder<scope::Option, P> {
     pub fn name(mut self, name: impl Into<Cow<'static, str>>) -> Self {
         let name = name.into();
-        if name.chars().all(char::is_whitespace) {
-            self
-        } else {
-            let meta = self
-                .option_name(name)
-                .map(|pair| Meta::Name(pair.0, pair.1));
-            self.try_meta(meta)
-        }
+        let meta = self
+            .option_name(name)
+            .map(|pair| Meta::Name(pair.0, pair.1));
+        self.try_meta(meta)
     }
 
     pub fn position(self) -> Self {
         self.meta(Meta::Position)
     }
-
-    // pub fn valid(self, )
 
     pub fn swizzle(self) -> Self
     where
@@ -837,20 +833,25 @@ impl<P> Builder<scope::Option, P> {
         P: Parse<Value = Option<T>>,
     {
         let default = default.into();
-        let help = format!("{default:?}");
-        self.default_with(move || default.clone(), move |_| help)
+        let format = format!("{default:?}");
+        self.default_with(move || default.clone(), format)
     }
 
-    pub fn default_with<T, F: Fn() -> T, H: Into<Cow<'static, str>>>(
-        self,
+    pub fn default_with<T, F: Fn() -> T>(
+        mut self,
         default: F,
-        help: impl FnOnce(Case) -> H,
+        format: impl Into<Cow<'static, str>>,
     ) -> Builder<scope::Option, Default<P, F>>
     where
         P: Parse<Value = Option<T>>,
     {
-        let case = self.case;
-        self.meta(Meta::Default(help(case).into()))
+        let mut format = format.into();
+        self.buffer.clear();
+        self.buffer.push_str(&format);
+        let inner = format.to_mut();
+        inner.clear();
+        inner.extend(self.case.convert(&self.buffer));
+        self.meta(Meta::Default(format))
             .map_parse(|parse| Default(parse, default))
     }
 
@@ -909,6 +910,39 @@ impl<P> Builder<scope::Option, P> {
             _marker: PhantomData,
         })
     }
+
+    pub fn valid(self, pattern: impl Into<Cow<'static, str>>) -> Self {
+        self.meta(Meta::Valid(pattern.into()))
+    }
+}
+
+fn type_name<T: 'static>(case: Case) -> Cow<'static, str> {
+    macro_rules! is {
+        ($left: expr $(, $rights: ident)+) => {
+            $($left == TypeId::of::<$rights>() || $left == TypeId::of::<Option<$rights>>() ||)+ false
+        };
+    }
+
+    let mut name = any::type_name::<T>();
+    let identifier = TypeId::of::<T>();
+    if let Some(split) = name.split('<').next() {
+        name = split;
+    }
+    if let Some(split) = name.split(':').last() {
+        name = split;
+    }
+    let name = if is!(identifier, bool) {
+        "boolean"
+    } else if is!(identifier, u8, u16, u32, u64, u128, usize) {
+        "natural number"
+    } else if is!(identifier, i8, i16, i32, i64, i128, isize) {
+        "integer number"
+    } else if is!(identifier, f32, f64) {
+        "rational number"
+    } else {
+        name
+    };
+    case.convert(name).collect()
 }
 
 fn merge<T>(left: Option<T>, right: Option<T>, merge: impl FnOnce(T, T) -> T) -> Option<T> {

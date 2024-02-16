@@ -1,4 +1,4 @@
-use core::{any::TypeId, num::NonZeroUsize};
+use core::num::NonZeroUsize;
 use std::borrow::Cow;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -18,7 +18,8 @@ pub enum Meta {
     Help(Cow<'static, str>),
     Usage(Cow<'static, str>),
     Note(Cow<'static, str>),
-    Type(Cow<'static, str>, TypeId),
+    Type(Cow<'static, str>),
+    Valid(Cow<'static, str>),
     Require,
     Many(Option<NonZeroUsize>),
     Default(Cow<'static, str>),
@@ -31,7 +32,6 @@ pub enum Meta {
     Options(Options),
     Verb(Vec<Meta>),
     Group(Vec<Meta>),
-    Valid(Vec<Meta>),
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -81,11 +81,12 @@ impl Meta {
             Meta::Help(value) => Meta::Help(value.clone()),
             Meta::Usage(value) => Meta::Usage(value.clone()),
             Meta::Note(value) => Meta::Note(value.clone()),
-            Meta::Type(value, identifier) => Meta::Type(value.clone(), *identifier),
+            Meta::Type(value) => Meta::Type(value.clone()),
             Meta::Require => Meta::Require,
             Meta::Many(value) => Meta::Many(*value),
             Meta::Default(value) => Meta::Default(value.clone()),
             Meta::Environment(value) => Meta::Environment(value.clone()),
+            Meta::Valid(value) => Meta::Valid(value.clone()),
             Meta::Hide => Meta::Hide,
             Meta::Show => Meta::Show,
             Meta::Swizzle => Meta::Swizzle,
@@ -106,16 +107,12 @@ impl Meta {
                 Meta::Group(metas.iter().map(|meta| meta.clone(depth - 1)).collect())
             }
             Meta::Group(_) => Meta::Group(Vec::new()),
-            Meta::Valid(metas) if depth > 0 => {
-                Meta::Valid(metas.iter().map(|meta| meta.clone(depth - 1)).collect())
-            }
-            Meta::Valid(_) => Meta::Group(Vec::new()),
         }
     }
 
     pub(crate) fn type_name(&self, depth: usize) -> Option<&Cow<'static, str>> {
         match self {
-            Meta::Type(name, _) if depth == 0 => Some(name),
+            Meta::Type(name) if depth == 0 => Some(name),
             Meta::Root(metas) | Meta::Option(metas) | Meta::Verb(metas) | Meta::Group(metas)
                 if depth > 0 =>
             {

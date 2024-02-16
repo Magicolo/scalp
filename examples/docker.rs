@@ -1,4 +1,5 @@
-use core::{any::type_name, fmt, str::FromStr};
+use core::fmt;
+use std::str::FromStr;
 use scalp::*;
 
 pub struct Docker {
@@ -85,38 +86,31 @@ pub enum Command {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LogLevel {
-    Debug = 1,
-    Info = 2,
-    Warn = 3,
-    Error = 4,
-    Fatal = 5,
+    Debug,
+    Info,
+    Warn,
+    Error,
+    Fatal,
 }
 
-trait Enum: Sized {
-    const NAMES: &'static [&'static str];
+impl FromStr for LogLevel {
+    type Err = &'static str;
 
-    fn name(&self) -> Option<&'static str>;
-    fn value(name: &str) -> Option<Self>;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "debug" => Ok(LogLevel::Debug),
+            "info" => Ok(LogLevel::Info),
+            "warn" => Ok(LogLevel::Warn),
+            "error" => Ok(LogLevel::Error),
+            "fatal" => Ok(LogLevel::Fatal),
+            _ => Err("Failed to parse."),
+        }
+    }
 }
 
 impl fmt::Display for LogLevel {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Debug::fmt(self, f)
-    }
-}
-
-impl FromStr for LogLevel {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "1" | "debug" => Ok(LogLevel::Debug),
-            "2" | "info" => Ok(LogLevel::Info),
-            "3" | "warn" => Ok(LogLevel::Warn),
-            "4" | "error" => Ok(LogLevel::Error),
-            "5" | "fatal" => Ok(LogLevel::Fatal),
-            _ => Err(format!("Failed to parse '{s}' as a {}", type_name::<Self>())),
-        }
     }
 }
 
@@ -259,14 +253,12 @@ fn global_options(builder: Builder<scope::Group>) -> Builder<scope::Group, impl 
             .name("l")
             .name("log-level")
             .help("Set the logging level.")
-            .parse::<LogLevel>()
-            .default_with(|| LogLevel::Info, |_| "info")
-            // .default("info")
-            // .valid(|valid| valid.is("i").is("info").map(|_| LogLevel::Info).swizzle())
-            // .valid(|valid| valid.is("d").is("debug").map(|_| LogLevel::Debug).swizzle())
-            // .valid(|valid| valid.is("w").is("warn").map(|_| LogLevel::Warn).swizzle())
-            // .valid(|valid| valid.is("e").is("error").map(|_| LogLevel::Error).swizzle())
-            // .valid(|valid| valid.is("f").is("fatal").map(|_| LogLevel::Fatal).swizzle())
+            .valid("i(nfo)?")
+            .valid("d(ebug)?")
+            .valid("w(arn)?")
+            .valid("e(rror)?")
+            .valid("f(atal)?")
+            .default(LogLevel::Info)
         )
         .options(Options::all(true, true))
         .map(|(config, context, debug, host, log_level)| GlobalOptions {

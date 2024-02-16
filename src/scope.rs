@@ -7,9 +7,8 @@ pub trait Scope: Into<Meta> + Extend<Meta> + DerefMut<Target = Vec<Meta>> {
     }
 }
 
+pub trait Version: Scope {}
 pub trait Node: Scope {}
-pub trait Parent: Scope {}
-pub trait Child: Scope {}
 
 macro_rules! scope {
     ($name: ident) => {
@@ -55,13 +54,9 @@ scope!(Root);
 scope!(Option);
 scope!(Group);
 scope!(Verb);
-scope!(Valid);
 
+impl Version for Root {}
+impl Version for Verb {}
 impl Node for Root {}
+impl Node for Group {}
 impl Node for Verb {}
-impl Parent for Root {}
-impl Parent for Group {}
-impl Parent for Verb {}
-impl Child for Group {}
-impl Child for Verb {}
-impl Child for Option {}
