@@ -61,10 +61,10 @@ impl<S, P> Builder<S, P> {
             _ => return Ok(indices),
         };
         if let Some(true) = version {
-            self.insert_version(metas, &mut indices, true, true)?;
+            metas.extend(self.insert_version(&mut indices, true, true)?);
         }
         if let Some(true) = help {
-            self.insert_help(metas, &mut indices, true, true)?;
+            metas.extend(self.insert_help(&mut indices, true, true)?);
         }
         if version.is_some() || help.is_some() {
             Self::insert_key(self.long.clone(), &mut indices, BREAK)?;
@@ -123,7 +123,9 @@ impl<S, P> Builder<S, P> {
                 }
                 Some(Meta::Options(Options::Version { short, long })) => {
                     let (short, long) = (*short, *long);
-                    self.insert_version(metas, indices, short, long)?;
+                    if let Some(meta) = self.insert_version(indices, short, long)? {
+                        metas.insert(i, meta);
+                    }
                     version = Some(false);
                     if hide == 0 {
                         help = help.or(Some(true))
@@ -131,21 +133,27 @@ impl<S, P> Builder<S, P> {
                 }
                 Some(Meta::Options(Options::License { short, long })) => {
                     let (short, long) = (*short, *long);
-                    self.insert_license(metas, indices, short, long)?;
+                    if let Some(meta) = self.insert_license(indices, short, long)? {
+                        metas.insert(i, meta);
+                    }
                     if hide == 0 {
                         help = help.or(Some(true))
                     }
                 }
                 Some(Meta::Options(Options::Author { short, long })) => {
                     let (short, long) = (*short, *long);
-                    self.insert_author(metas, indices, short, long)?;
+                    if let Some(meta) = self.insert_author(indices, short, long)? {
+                        metas.insert(i, meta);
+                    }
                     if hide == 0 {
                         help = help.or(Some(true))
                     }
                 }
                 Some(Meta::Options(Options::Help { short, long })) => {
                     let (short, long) = (*short, *long);
-                    self.insert_help(metas, indices, short, long)?;
+                    if let Some(meta) = self.insert_help(indices, short, long)? {
+                        metas.insert(i, meta);
+                    }
                     help = Some(false);
                 }
                 None => break,
@@ -222,13 +230,11 @@ impl<S, P> Builder<S, P> {
 
     fn insert_version(
         &mut self,
-        metas: &mut Vec<Meta>,
         indices: &mut Indices,
         short: bool,
         long: bool,
-    ) -> Result<(), Error> {
+    ) -> Result<Option<Meta>, Error> {
         self.insert_option(
-            metas,
             indices,
             if short { Some("v") } else { None },
             if long { Some("version") } else { None },
@@ -239,13 +245,11 @@ impl<S, P> Builder<S, P> {
 
     fn insert_license(
         &mut self,
-        metas: &mut Vec<Meta>,
         indices: &mut Indices,
         short: bool,
         long: bool,
-    ) -> Result<(), Error> {
+    ) -> Result<Option<Meta>, Error> {
         self.insert_option(
-            metas,
             indices,
             if short { Some("l") } else { None },
             if long { Some("license") } else { None },
@@ -256,13 +260,11 @@ impl<S, P> Builder<S, P> {
 
     fn insert_author(
         &mut self,
-        metas: &mut Vec<Meta>,
         indices: &mut Indices,
         short: bool,
         long: bool,
-    ) -> Result<(), Error> {
+    ) -> Result<Option<Meta>, Error> {
         self.insert_option(
-            metas,
             indices,
             if short { Some("a") } else { None },
             if long { Some("author") } else { None },
@@ -273,13 +275,11 @@ impl<S, P> Builder<S, P> {
 
     fn insert_help(
         &mut self,
-        metas: &mut Vec<Meta>,
         indices: &mut Indices,
         short: bool,
         long: bool,
-    ) -> Result<(), Error> {
+    ) -> Result<Option<Meta>, Error> {
         self.insert_option(
-            metas,
             indices,
             if short { Some("h") } else { None },
             if long { Some("help") } else { None },
@@ -290,13 +290,12 @@ impl<S, P> Builder<S, P> {
 
     fn insert_option(
         &mut self,
-        metas: &mut Vec<Meta>,
         indices: &mut Indices,
         short: Option<&'static str>,
         long: Option<&'static str>,
         help: &'static str,
         index: usize,
-    ) -> Result<(), Error> {
+    ) -> Result<Option<Meta>, Error> {
         let mut option = vec![Meta::Help(Cow::Borrowed(help))];
         if let Some(short) = short {
             let (name, value) = self.option_name(short)?;
@@ -311,9 +310,10 @@ impl<S, P> Builder<S, P> {
             }
         }
         if option.len() > 1 {
-            metas.push(Meta::Option(option));
+            Ok(Some(Meta::Option(option)))
+        } else {
+            Ok(None)
         }
-        Ok(())
     }
 
     fn insert_key(
@@ -322,7 +322,10 @@ impl<S, P> Builder<S, P> {
         index: usize,
     ) -> Result<(), Error> {
         match indices.indices.entry(key) {
-            Entry::Occupied(entry) => Err(Error::DuplicateName(entry.key().to_string())),
+            Entry::Occupied(entry) => {
+                let _ = 1;
+                Err(Error::DuplicateName(entry.key().to_string()))
+            }
             Entry::Vacant(entry) => {
                 entry.insert(index);
                 Ok(())
@@ -691,28 +694,23 @@ impl Builder<scope::Root> {
         self
     }
 
-    pub fn short(mut self, prefix: impl Into<Cow<'static, str>>) -> Self {
-        let prefix = prefix.into();
-        if prefix.is_empty()
-            || self.long == prefix
-            || prefix.chars().any(|letter| letter.is_ascii_alphanumeric())
+    pub fn prefix(
+        mut self,
+        short: impl Into<Cow<'static, str>>,
+        long: impl Into<Cow<'static, str>>,
+    ) -> Self {
+        let short = short.into();
+        let long = long.into();
+        if short == long
+            || short.is_empty()
+            || short.chars().any(|letter| letter.is_ascii_alphanumeric())
+            || long.is_empty()
+            || long.chars().any(|letter| letter.is_ascii_alphanumeric())
         {
-            self.try_map_parse(|_| Err(Error::InvalidShortPrefix(prefix)))
+            self.try_map_parse(|_| Err(Error::InvalidPrefix(short, long)))
         } else {
-            self.short = prefix;
-            self
-        }
-    }
-
-    pub fn long(mut self, prefix: impl Into<Cow<'static, str>>) -> Self {
-        let prefix = prefix.into();
-        if prefix.is_empty()
-            || self.short == prefix
-            || prefix.chars().any(|letter| letter.is_ascii_alphanumeric())
-        {
-            self.try_map_parse(|_| Err(Error::InvalidLongPrefix(prefix)))
-        } else {
-            self.long = prefix;
+            self.short = short;
+            self.long = long;
             self
         }
     }

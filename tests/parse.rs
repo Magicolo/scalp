@@ -32,7 +32,7 @@ fn missing_option_value_with_short() -> Result {
     (regex!("[~±@£¢¤¬¦²³¼½¾`^¯_]+"), regex!("[a-zA-Z]")).check(COUNT, |(short, name)| {
         let parser = Builder::new()
             .case(Case::Same)
-            .short(short.clone())
+            .prefix(short.clone(), "--")
             .option::<usize, _>(|option| option.name(name.clone()))
             .build()
             .unwrap();
@@ -48,7 +48,7 @@ fn missing_option_value_with_long() -> Result {
     (regex!("[~±@£¢¤¬¦²³¼½¾`^¯_]+"), regex!("[a-zA-Z]{2,}")).check(COUNT, |(long, name)| {
         let parser = Builder::new()
             .case(Case::Same)
-            .long(long.clone())
+            .prefix("-", long.clone())
             .option::<isize, _>(|option| option.name(name.clone()))
             .build()
             .unwrap();
@@ -78,13 +78,38 @@ fn fails_to_parse_invalid_value() -> Result {
 
 #[test]
 fn verb_with_no_option_allows_for_root_options_before_and_after() -> Result {
-    let parser = Builder::new()
-        .option(|option| option.name("a").default(1))
-        .option(|option| option.name("b").default(4))
-        .verb(|verb| verb.name("c"))
-        .build()?;
-    let result = parser.parse_with(["-a", "2", "c", "-b", "3"], [("", "")])?;
-    assert_eq!(result, (2, 3, Some(())));
+    (
+        regex!("[a-z]{2,}")
+            .array::<3>()
+            .filter(|[a, b, c]| a != b && a != c && b != c),
+        u8::generator(),
+        u8::generator(),
+    )
+        .check(COUNT, |(values, v, u)| {
+            let Some([a, b, c]) = values else {
+                return Ok(true);
+            };
+
+            let (v, u) = (*v, *u);
+            let parser = Builder::new()
+                .case(Case::Same)
+                .option(|option| option.name(a.clone()).default(v))
+                .option(|option| option.name(b.clone()).default(u))
+                .verb(|verb| verb.name(c.clone()))
+                .build()
+                .unwrap();
+            let result = parser.parse_with(
+                [
+                    format!("--{a}"),
+                    format!("{v}"),
+                    c.clone(),
+                    format!("--{b}"),
+                    format!("{u}"),
+                ],
+                [("", "")],
+            );
+            prove!(result == Ok((v, u, Some(()))))
+        })?;
     Ok(())
 }
 

@@ -225,14 +225,14 @@ impl<'a> Helper<'a> {
     }
 
     fn tags(&mut self, metas: &[Meta]) -> Result<bool, fmt::Error> {
-        let tags = self.join(metas, "[", ", ", |meta| match meta {
+        let mut count = self.join(metas, "[", ", ", |meta| match meta {
             Meta::Require => Some(Cow::Borrowed("require")),
             Meta::Swizzle => Some(Cow::Borrowed("swizzle")),
             Meta::Many(_) => Some(Cow::Borrowed("many")),
             _ => None,
         })?;
-        let prefix = if tags == 0 { "[" } else { ", " };
-        let valids = self.join(
+        let prefix = if count == 0 { "[" } else { ", " };
+        count += self.join(
             metas,
             format_args!("{prefix}valid: "),
             " | ",
@@ -241,8 +241,8 @@ impl<'a> Helper<'a> {
                 _ => None,
             },
         )?;
-        let prefix = if valids == 0 { "[" } else { ", " };
-        let defaults = self.join(
+        let prefix = if count == 0 { "[" } else { ", " };
+        count += self.join(
             metas,
             format_args!("{prefix}default: "),
             " | ",
@@ -252,7 +252,7 @@ impl<'a> Helper<'a> {
                 _ => None,
             },
         )?;
-        if tags + valids + defaults > 0 {
+        if count > 0 {
             write!(self.buffer, "]")?;
             Ok(true)
         } else {
@@ -360,14 +360,16 @@ impl<'a> Helper<'a> {
     ) -> Result<Helper, fmt::Error> {
         let mut format = 0;
         let width = self.write_with(|helper| {
+            format += helper.write(format_args!("{Bold}"))?;
             helper.write_column(columns.short, format_args!("{INDENTATION}"), |helper| {
-                helper.names(metas, true, false, "", option)?;
+                helper.names(metas, true, false, format_args!("{Bold}"), option)?;
                 Ok(())
             })?;
             helper.write_column(columns.long, format_args!("{INDENTATION}"), |helper| {
                 helper.names(metas, false, true, "", option)?;
                 Ok(())
             })?;
+            format += helper.write(format_args!("{Reset}"))?;
             format += helper.write(format_args!("{Faint}"))?;
             helper.write_column(columns.types + 2, format_args!("{INDENTATION}"), |helper| {
                 if helper.types(metas, "<")? > 0 {

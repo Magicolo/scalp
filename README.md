@@ -16,35 +16,53 @@
 
 ## Getting Started
 ```rust
-use scalp::{Builder, Case, Error};
+use std::fs;
+use scalp::*;
 
 fn main() -> Result<(), Error> {
     #[derive(Debug, PartialEq, Eq)]
     enum Command {
-        Run,
+        Run { settings: Option<String>, path: String },
         Show,
     }
 
     struct Root {
         debug: bool,
+        yes: bool,
+        force: bool,
+        recurse: bool,
         command: Command,
     }
 
     let parser = Builder::new()
         .case(Case::Kebab { upper: false })
-        .option(|option| option.name("debug").name("d").default(false))
+        .option(|option| option.name("d").name("debug").help("Debug mode.").default(false))
+        .option(|option| option.name("y").name("yes").swizzle().default(false))
+        .option(|option| option.name("f").name("force").swizzle().default(false))
+        .option(|option| option.name("r").name("recurse").swizzle().default(false))
+        .options([Options::version(true, true), Options::help(true, true)])
         .group(|group| group
-            .verb(|verb| verb.name("run").map(|_| Command::Run))
+            .verb(|verb| verb.name("run")
+                .usage("example run [OPTIONS]")
+                .option(|option| option.position().require())
+                .option(|option| option.name("s").name("settings").parse::<String>().map(|path| fs::read_to_string(path?).ok()))
+                .map(|(file, settings)| Command::Run { path: file, settings }))
             .verb(|verb| verb.name("show").map(|_| Command::Show))
             .any_or("Missing command.")
         )
-        .map(|(debug, command)| Root { debug, command })
+        .map(|(debug, yes, force, recurse, command)| Root { debug, yes, recurse, force, command })
+        .help("")
+        .note("Documentation: https://docs.rs/scalp/latest/scalp/")
         .build()?;
 
-    let root = parser.parse_with(["run", "-d"], [("", "")])?;
-    assert_eq!(root.command, Command::Run);
+    let root = parser.parse_with(["--debug", "-fyr", "run", "./", "-s", "./settings.json"], [("", "")])?;
     assert!(root.debug);
+    assert!(root.force);
+    assert!(root.yes);
+    assert!(root.recurse);
+
+    let Command::Run { path, .. } = root.command else { panic!(); };
+    assert_eq!(path, "./");
     Ok(())
 }
-
 ```

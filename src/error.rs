@@ -37,8 +37,7 @@ pub enum Error {
     MissingOptionNameOrPosition,
     MissingVerbName,
     FailedToParseArguments,
-    InvalidShortPrefix(Cow<'static, str>),
-    InvalidLongPrefix(Cow<'static, str>),
+    InvalidPrefix(Cow<'static, str>, Cow<'static, str>),
     MissingShortOptionNameForSwizzling,
     InvalidSwizzleOption(char),
     InvalidOptionType(Cow<'static, str>),
@@ -139,8 +138,7 @@ impl fmt::Display for Error {
                 }
                 write!(f, ".")?;
             }
-            Error::InvalidShortPrefix(prefix) => write!(f, "Invalid short prefix '{prefix}'. A valid short prefix is non-empty, contains only non-alpha-numeric characters and differs from the long prefix.")?,
-            Error::InvalidLongPrefix(prefix) => write!(f, "Invalid long prefix '{prefix}'. A valid long prefix is non-empty, contains only non-alpha-numeric characters and differs from the short prefix.")?,
+            Error::InvalidPrefix(short, long) => write!(f, "Invalid prefix '{short}' or '{long}'. A valid prefix is non-empty, contains only non-alpha-numeric characters and differs from the other prefix.")?,
             Error::DuplicateName(name) => write!(f, "Duplicate name '{name}'.")?,
             Error::InvalidIndex(index) => write!(f, "Invalid index '{index}'.")?,
             Error::MissingIndex => write!(f, "Missing index.")?,

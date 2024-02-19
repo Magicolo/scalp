@@ -53,6 +53,14 @@ impl Options {
         .into_iter()
     }
 
+    pub fn common(short: bool, long: bool) -> impl Iterator<Item = Options> {
+        [
+            Options::Version { short, long },
+            Options::Help { short, long },
+        ]
+        .into_iter()
+    }
+
     pub const fn version(short: bool, long: bool) -> Self {
         Self::Version { short, long }
     }
