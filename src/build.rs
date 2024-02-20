@@ -74,7 +74,7 @@ impl<S, P> Builder<S, P> {
 
     fn descend_node(
         &mut self,
-        metas: &mut Vec<Meta>,
+        metas: &mut [Meta],
         mask: usize,
         shift: u32,
         indices: &mut Indices,
