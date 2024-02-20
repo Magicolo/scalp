@@ -5,10 +5,42 @@ use core::{
     slice::from_ref,
 };
 use std::{borrow::Cow, fmt::Display, fs, iter::from_fn, ops::Deref};
-use termion::style::{Bold, Faint, Italic, NoFaint, NoItalic, NoUnderline, Reset, Underline};
+use termion::{
+    color::Rgb,
+    style::{Bold, Faint, Italic, Reset, Underline},
+};
 
 const INDENTATION: &str = "  ";
 const INDENT: usize = INDENTATION.len();
+const OCEAN_BLUE: Rgb = Rgb(36, 113, 163);
+const TURQUOISE: Rgb = Rgb(64, 224, 208);
+const RUBY_RED: Rgb = Rgb(220, 20, 60);
+const SILVER_GRAY: Rgb = Rgb(169, 169, 169);
+const MAUVE: Rgb = Rgb(224, 176, 255);
+// const SUNSET_ORANGE: Rgb = Rgb(255, 140, 79);
+// const EMERALD_GREEN: Rgb = Rgb(0, 158, 96);
+// const AMETHYST_PURPLE: Rgb = Rgb(138, 43, 226);
+// const GOLDENROD_YELLOW: Rgb = Rgb(218, 165, 32);
+// const LIME_GREEN: Rgb = Rgb(50, 205, 50);
+// const TEAL: Rgb = Rgb(0, 128, 128);
+// const CORAL_PINK: Rgb = Rgb(255, 127, 80);
+// const SAFFRON_YELLOW: Rgb = Rgb(244, 196, 48);
+// const INDIGO: Rgb = Rgb(75, 0, 130);
+// const AQUA: Rgb = Rgb(0, 255, 255);
+// const VIOLET: Rgb = Rgb(238, 130, 238);
+// const FOREST_GREEN: Rgb = Rgb(34, 139, 34);
+// const PEACH: Rgb = Rgb(255, 218, 185);
+// const STEEL_BLUE: Rgb = Rgb(70, 130, 180);
+// const CHOCOLATE_BROWN: Rgb = Rgb(139, 69, 19);
+// const CORNFLOWER_BLUE: Rgb = Rgb(100, 149, 237);
+// const OLIVE_GREEN: Rgb = Rgb(128, 128, 0);
+
+const ROOT: Rgb = RUBY_RED;
+const GROUP: Rgb = OCEAN_BLUE;
+const VERB: Rgb = TURQUOISE;
+const OPTION: Rgb = TURQUOISE;
+const USAGE: Rgb = MAUVE;
+const NOTE: Rgb = SILVER_GRAY;
 
 struct Helper<'a> {
     buffer: &'a mut String,
@@ -137,8 +169,8 @@ impl<'a> Helper<'a> {
     fn wrap(
         &mut self,
         value: &str,
-        prefix: &str,
-        suffix: &str,
+        prefix: impl fmt::Display,
+        suffix: impl fmt::Display,
         cursor: &mut usize,
         join: &mut bool,
     ) -> Result<(), fmt::Error> {
@@ -147,18 +179,19 @@ impl<'a> Helper<'a> {
                 writeln!(self.buffer)?;
                 self.indentation()?;
             } else {
-                write!(self.buffer, "{prefix}")?;
-                *cursor += prefix.len();
+                *cursor += self.write(&prefix)?;
             }
 
+            let mut join = false;
             for word in line.split(' ') {
+                if replace(&mut join, true) {
+                    write!(self.buffer, " ")?;
+                }
                 self.word(word, cursor)?;
-                write!(self.buffer, " ")?;
             }
         }
         if *join {
-            write!(self.buffer, "{suffix}")?;
-            *cursor += suffix.len();
+            *cursor += self.write(suffix)?;
         }
         Ok(())
     }
@@ -275,8 +308,8 @@ impl<'a> Helper<'a> {
                     helper.indentation()?;
                     helper.wrap(
                         value,
-                        Italic.as_ref(),
-                        NoItalic.as_ref(),
+                        format_args!("{}{Italic}", NOTE.fg_string()),
+                        format_args!("{Reset}"),
                         &mut 0,
                         &mut false,
                     )?;
@@ -286,8 +319,8 @@ impl<'a> Helper<'a> {
                     helper.indentation()?;
                     helper.wrap(
                         value,
-                        Underline.as_ref(),
-                        NoUnderline.as_ref(),
+                        format_args!("{}{Underline}", USAGE.fg_string()),
+                        format_args!("{Reset}"),
                         &mut 0,
                         &mut false,
                     )?;
@@ -296,22 +329,31 @@ impl<'a> Helper<'a> {
                 Meta::Root(metas) => {
                     writeln!(helper.buffer)?;
                     helper.indentation()?;
-                    if helper.names(metas, true, true, format_args!("{Underline}{Bold}"), &mut 0)?
-                        > 0
+                    if helper.names(
+                        metas,
+                        true,
+                        true,
+                        format_args!("{}{Bold}", ROOT.fg_string()),
+                        &mut 0,
+                    )? > 0
                     {
-                        write!(helper.buffer, "{Reset}{Underline}")?;
                         helper.versions(metas, " ")?;
-                        write!(helper.buffer, "{NoUnderline}")?;
-                        if helper.authors(metas, format_args!("{Italic}{Faint} by "))? > 0 {
-                            write!(helper.buffer, "{NoFaint}{NoItalic}")?;
-                        }
+                        helper.authors(metas, format_args!("{Italic}{Faint} by "))?;
+                        write!(helper.buffer, "{Reset}")?;
                     }
                     writeln!(helper.buffer)?;
                     helper.node(metas, depth + 1)?;
                 }
                 Meta::Group(metas) => {
                     helper.indentation()?;
-                    if helper.names(metas, true, true, format_args!("{Bold}"), &mut 0)? > 0 {
+                    if helper.names(
+                        metas,
+                        true,
+                        true,
+                        format_args!("{}{Bold}", GROUP.fg_string()),
+                        &mut 0,
+                    )? > 0
+                    {
                         writeln!(helper.buffer, "{Reset}")?;
                         helper.indent().node(metas, depth + 1)?;
                         writeln!(helper.buffer)?;
@@ -320,31 +362,42 @@ impl<'a> Helper<'a> {
                     }
                 }
                 Meta::Verb(metas) if depth == 0 => {
-                    writeln!(helper.buffer)?;
                     helper.indentation()?;
-                    if helper.names(metas, true, true, format_args!("{Bold}"), &mut 0)? > 0 {
+                    if helper.names(
+                        metas,
+                        true,
+                        true,
+                        format_args!("{}{Bold}", VERB.fg_string()),
+                        &mut 0,
+                    )? > 0
+                    {
                         helper.versions(metas, " ")?;
                         writeln!(helper.buffer, "{Reset}")?;
                     } else {
                         writeln!(helper.buffer)?;
                     }
                     helper.indent().node(metas, depth + 1)?;
+                    writeln!(helper.buffer)?;
                 }
                 Meta::Verb(metas) => {
                     helper.indentation()?;
-                    helper.write_columns(metas, &columns, &mut 0)?.help(metas)?;
+                    helper
+                        .write_columns(metas, &columns, true, &mut 0)?
+                        .help(metas)?;
                     writeln!(helper.buffer)?;
                 }
                 Meta::Option(metas) => {
                     helper.indentation()?;
-                    let mut helper = helper.write_columns(metas, &columns, &mut option)?;
+                    let mut helper = helper.write_columns(metas, &columns, false, &mut option)?;
                     let width = helper.write_with(|helper| helper.help(metas))?;
                     let buffer = helper.scope(|mut helper| helper.tags(metas))?;
                     if width + buffer.len() > helper.width - helper.indent {
                         writeln!(helper.buffer)?;
                         helper.indentation()?;
+                    } else {
+                        write!(helper.buffer, " ")?;
                     }
-                    writeln!(helper.buffer, "{Faint}{buffer}{NoFaint}")?;
+                    writeln!(helper.buffer, "{Faint}{buffer}{Reset}")?;
                 }
                 _ => {}
             }
@@ -356,13 +409,18 @@ impl<'a> Helper<'a> {
         &mut self,
         metas: &[Meta],
         columns: &Columns,
+        verb: bool,
         option: &mut usize,
     ) -> Result<Helper, fmt::Error> {
         let mut format = 0;
         let width = self.write_with(|helper| {
-            format += helper.write(format_args!("{Bold}"))?;
+            if verb {
+                format += helper.write(format_args!("{}{Bold}", VERB.fg_string()))?;
+            } else {
+                format += helper.write(format_args!("{}", OPTION.fg_string()))?;
+            }
             helper.write_column(columns.short, format_args!("{INDENTATION}"), |helper| {
-                helper.names(metas, true, false, format_args!("{Bold}"), option)?;
+                helper.names(metas, true, false, "", option)?;
                 Ok(())
             })?;
             helper.write_column(columns.long, format_args!("{INDENTATION}"), |helper| {
@@ -377,7 +435,7 @@ impl<'a> Helper<'a> {
                 }
                 Ok(())
             })?;
-            format += helper.write(format_args!("{NoFaint}"))?;
+            format += helper.write(format_args!("{Reset}"))?;
             Ok(())
         })?;
         Ok(self.indent_with(width.saturating_sub(format)))

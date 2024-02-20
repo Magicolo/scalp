@@ -85,78 +85,56 @@ impl<S, P> Builder<S, P> {
         let mut hide = 0;
         for i in 0..metas.len() {
             let value = (index << shift) | mask;
-            match metas.get_mut(i) {
-                Some(Meta::Version(_)) => {
-                    if hide == 0 {
-                        version = version.or(Some(true))
-                    }
+            let Some(meta) = metas.get_mut(i) else {
+                break;
+            };
+            match meta {
+                Meta::Version(_) if hide == 0 => version = version.or(Some(true)),
+                Meta::Help(_) | Meta::Usage(_) | Meta::Note(_) if hide == 0 => {
+                    help = help.or(Some(true))
                 }
-                Some(Meta::Help(_) | Meta::Usage(_) | Meta::Note(_)) => {
-                    if hide == 0 {
-                        help = help.or(Some(true))
-                    }
-                }
-                Some(Meta::Hide) => hide += 1,
-                Some(Meta::Show) => hide = usize::saturating_sub(hide, 1),
-                Some(Meta::Option(metas)) => {
+                Meta::Hide => hide = usize::saturating_add(hide, 1),
+                Meta::Show => hide = usize::saturating_sub(hide, 1),
+                Meta::Option(metas) => {
                     self.descend_option(metas, indices, value)?;
                     index += 1;
                     if hide == 0 {
                         help = help.or(Some(true))
                     }
                 }
-                Some(Meta::Verb(metas)) => {
+                Meta::Verb(metas) => {
                     self.descend_verb(metas, indices, value)?;
                     index += 1;
                     if hide == 0 {
                         help = help.or(Some(true))
                     }
                 }
-                Some(Meta::Group(_)) if shift > MAXIMUM => {
-                    return Err(Error::GroupNestingLimitOverflow)
-                }
-                Some(Meta::Group(metas)) => {
+                Meta::Group(_) if shift > MAXIMUM => return Err(Error::GroupNestingLimitOverflow),
+                Meta::Group(metas) => {
                     let tuple = self.descend_node(metas, value, shift + SHIFT, indices)?;
                     version = merge(version, tuple.0, |left, right| left && right);
                     help = merge(help, tuple.1, |left, right| left && right);
                     index += 1;
                 }
-                Some(Meta::Options(Options::Version { short, long })) => {
-                    let (short, long) = (*short, *long);
-                    if let Some(meta) = self.insert_version(indices, short, long)? {
-                        metas.insert(i, meta);
-                    }
-                    version = Some(false);
-                    if hide == 0 {
-                        help = help.or(Some(true))
-                    }
-                }
-                Some(Meta::Options(Options::License { short, long })) => {
-                    let (short, long) = (*short, *long);
-                    if let Some(meta) = self.insert_license(indices, short, long)? {
-                        metas.insert(i, meta);
-                    }
-                    if hide == 0 {
-                        help = help.or(Some(true))
-                    }
-                }
-                Some(Meta::Options(Options::Author { short, long })) => {
-                    let (short, long) = (*short, *long);
-                    if let Some(meta) = self.insert_author(indices, short, long)? {
-                        metas.insert(i, meta);
-                    }
-                    if hide == 0 {
-                        help = help.or(Some(true))
-                    }
-                }
-                Some(Meta::Options(Options::Help { short, long })) => {
-                    let (short, long) = (*short, *long);
-                    if let Some(meta) = self.insert_help(indices, short, long)? {
-                        metas.insert(i, meta);
+                Meta::Options(options) => {
+                    let option = match *options {
+                        Options::Help { short, long } => self.insert_help(indices, short, long)?,
+                        Options::Version { short, long } => {
+                            self.insert_version(indices, short, long)?
+                        }
+                        Options::License { short, long } => {
+                            self.insert_license(indices, short, long)?
+                        }
+                        Options::Author { short, long } => {
+                            self.insert_author(indices, short, long)?
+                        }
+                    };
+                    if let Some(option) = option {
+                        *meta = option;
                     }
                     help = Some(false);
+                    version = Some(false);
                 }
-                None => break,
                 _ => {}
             }
         }
