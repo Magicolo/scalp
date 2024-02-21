@@ -390,7 +390,7 @@ impl<'a> Helper<'a> {
                     if width + buffer.len() > helper.width - helper.indent {
                         writeln!(helper.buffer)?;
                         helper.indentation()?;
-                    } else {
+                    } else if width > 0 {
                         write!(helper.buffer, " ")?;
                     }
                     writeln!(helper.buffer, "{Faint}{buffer}{Reset}")?;

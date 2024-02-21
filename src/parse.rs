@@ -8,6 +8,7 @@ use core::{cmp::min, marker::PhantomData, num::NonZeroUsize};
 use std::{
     borrow::Cow,
     collections::{HashMap, HashSet, VecDeque},
+    fmt,
     str::FromStr,
 };
 
@@ -17,7 +18,7 @@ pub struct State<'a> {
     short: &'a str,
     long: &'a str,
     set: Option<&'a RegexSet>,
-    key: Option<&'a Cow<'static, str>>,
+    key: Option<&'a Key>,
     meta: Option<&'a Meta>,
     index: Option<usize>,
 }
@@ -66,6 +67,12 @@ pub struct Default<P, T>(pub(crate) P, pub(crate) T);
 pub struct Environment<P, F>(pub(crate) P, pub(crate) Cow<'static, str>, pub(crate) F);
 pub struct At<P = ()>(pub(crate) P);
 
+#[derive(Clone, PartialEq)]
+pub enum Key {
+    At(usize),
+    Name(Cow<'static, str>),
+}
+
 pub trait Parse {
     type State;
     type Value;
@@ -76,6 +83,33 @@ pub trait Parse {
 
 pub trait Any<T> {
     fn any(self) -> Option<T>;
+}
+
+impl fmt::Display for Key {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Key::At(position) => write!(f, "[{}]", position),
+            Key::Name(name) => write!(f, "{}", name),
+        }
+    }
+}
+
+impl From<&'static str> for Key {
+    fn from(name: &'static str) -> Self {
+        Key::Name(name.into())
+    }
+}
+
+impl From<String> for Key {
+    fn from(name: String) -> Self {
+        Key::Name(name.into())
+    }
+}
+
+impl From<usize> for Key {
+    fn from(position: usize) -> Self {
+        Key::At(position)
+    }
 }
 
 impl<T: Stack> Stack for At<T> {
@@ -169,7 +203,7 @@ impl<'a> State<'a> {
         &'b mut self,
         meta: Option<&'b Meta>,
         set: Option<&'b RegexSet>,
-        key: Option<&'b Cow<'static, str>>,
+        key: Option<&'b Key>,
         index: Option<usize>,
     ) -> State {
         let mut state = self.own();
@@ -316,7 +350,7 @@ impl<P: Parse> Parse for Node<P> {
                 return self.parse.finalize((outer, state));
             }
 
-            let mut positions = self.indices.positions.iter().copied();
+            let mut positions = self.indices.positions.iter().copied().enumerate();
             while let Some(key) = state.key(&self.indices.swizzles)? {
                 match self.indices.indices.get(&key).copied() {
                     Some(HELP) => return Err(Error::Help(None)),
@@ -325,17 +359,19 @@ impl<P: Parse> Parse for Node<P> {
                     Some(AUTHOR) => return Err(Error::Author(None)),
                     Some(BREAK) => break,
                     Some(index) => {
+                        let key = Key::Name(key);
                         outer = self.parse.parse((
                             outer,
                             state.with(Some(&self.meta), None, Some(&key), Some(index)),
                         ))?
                     }
                     None => match positions.next() {
-                        Some(index) => {
+                        Some((i, index)) => {
                             state.restore(key);
+                            let key = Key::At(i);
                             outer = self.parse.parse((
                                 outer,
-                                state.with(Some(&self.meta), None, None, Some(index)),
+                                state.with(Some(&self.meta), None, Some(&key), Some(index)),
                             ))?
                         }
                         None => {

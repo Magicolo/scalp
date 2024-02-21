@@ -1,3 +1,4 @@
+use crate::parse::Key;
 use core::fmt;
 use std::{borrow::Cow, collections::VecDeque, error};
 
@@ -8,9 +9,9 @@ pub enum Error {
     Author(Option<String>),
     License(Option<String>),
 
-    MissingOptionValue(Option<Cow<'static, str>>, Option<Cow<'static, str>>),
-    MissingRequiredValue(Option<Cow<'static, str>>),
-    DuplicateOption(Option<Cow<'static, str>>),
+    MissingOptionValue(Option<Cow<'static, str>>, Option<Key>),
+    MissingRequiredValue(Option<Key>),
+    DuplicateOption(Option<Key>),
     UnrecognizedArgument(Cow<'static, str>, Vec<(Cow<'static, str>, usize)>),
     ExcessArguments(VecDeque<Cow<'static, str>>),
     DuplicateName(String),
@@ -21,13 +22,9 @@ pub enum Error {
         Cow<'static, str>,
         Cow<'static, str>,
         Option<Cow<'static, str>>,
-        Option<Cow<'static, str>>,
+        Option<Key>,
     ),
-    FailedToParseOptionValue(
-        Cow<'static, str>,
-        Option<Cow<'static, str>>,
-        Option<Cow<'static, str>>,
-    ),
+    FailedToParseOptionValue(Cow<'static, str>, Option<Cow<'static, str>>, Option<Key>),
     DuplicateNode,
     GroupNestingLimitOverflow,
     InvalidIndex(usize),
@@ -42,7 +39,7 @@ pub enum Error {
     InvalidSwizzleOption(char),
     InvalidOptionType(Cow<'static, str>),
     InvalidInitialization,
-    InvalidOptionValue(Cow<'static, str>, Option<Cow<'static, str>>),
+    InvalidOptionValue(Cow<'static, str>, Option<Key>),
 }
 
 impl error::Error for Error {}

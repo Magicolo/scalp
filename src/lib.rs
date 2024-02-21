@@ -1,9 +1,9 @@
-mod build;
+pub mod build;
 mod case;
 mod error;
 mod help;
 pub mod meta;
-mod parse;
+pub mod parse;
 pub mod scope;
 mod spell;
 mod stack;
