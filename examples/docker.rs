@@ -190,10 +190,8 @@ fn commands(builder: Builder<scope::Group>) -> Builder<scope::Group, impl Parse<
         .verb(|verb| verb.name("inspect").map(|_| Command::Inspect))
         .verb(|verb| verb
             .name("kill")
-            .help("")
+            .summary("Kill one or more running containers.")
             .usage("Usage: docker kill [OPTIONS] CONTAINER [CONTAINER...]")
-            .help("")
-            .help("Kill one or more running containers.")
             .help("")
             .note("Aliases: docker container kill, docker kill")
             .help("")
@@ -273,10 +271,8 @@ fn main() -> Result<(), Error> {
     let parser = Builder::new()
         .name(env!("CARGO_BIN_NAME").trim())
         .version(env!("CARGO_PKG_VERSION").trim())
-        .help("")
+        .summary("A self-sufficient runtime for containers.")
         .usage("Usage: docker [OPTIONS] COMMAND")
-        .help("")
-        .help("A self-sufficient runtime for containers.")
         .help("")
         .group(|group| group
             .group(common_commands)
@@ -293,10 +289,17 @@ fn main() -> Result<(), Error> {
         .map(|(command, global)| Docker { command, global })
         .build()?;
     let arguments = [
-        "--help", "--config", "boba", "--debug", "false", "-H", "jango", "--host", "karl", "kill",
+        "kill", "--help", "--config", "boba", "--debug", "false", "-H", "jango", "--host", "karl", "kill",
     ];
     let environment = [("DOCKER_HOST", "fett")];
-    let docker = parser.parse_with(arguments, environment)?;
+    let docker = match parser.parse_with(arguments, environment) {
+        Ok(docker) => docker,
+        Err(Error::Help(Some(value))
+            | Error::Version(Some(value))
+            | Error::License(Some(value))
+            | Error::Author(Some(value))) => return Ok(println!("{}", value)),
+        Err(error) => return Err(error),
+    };
     assert_eq!(docker.global.config, "boba".to_string());
     assert_eq!(docker.global.context, Some("fett".to_string()));
     assert!(!docker.global.debug);

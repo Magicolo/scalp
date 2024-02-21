@@ -650,6 +650,15 @@ impl<S: scope::Version, P> Builder<S, P> {
     pub fn version(self, version: impl Into<Cow<'static, str>>) -> Self {
         self.meta(Meta::Version(version.into()))
     }
+
+    pub fn summary(self, summary: impl Into<Cow<'static, str>>) -> Self {
+        let summary = summary.into();
+        if summary.chars().all(char::is_whitespace) {
+            self
+        } else {
+            self.meta(Meta::Summary(summary))
+        }
+    }
 }
 
 impl Builder<scope::Root> {
@@ -742,6 +751,24 @@ impl<P> Builder<scope::Root, P> {
             self
         } else {
             self.meta(Meta::Author(author))
+        }
+    }
+
+    pub fn repository(self, repository: impl Into<Cow<'static, str>>) -> Self {
+        let repository = repository.into();
+        if repository.chars().all(char::is_whitespace) {
+            self
+        } else {
+            self.meta(Meta::Repository(repository))
+        }
+    }
+
+    pub fn home(self, home: impl Into<Cow<'static, str>>) -> Self {
+        let home = home.into();
+        if home.chars().all(char::is_whitespace) {
+            self
+        } else {
+            self.meta(Meta::Home(home))
         }
     }
 }

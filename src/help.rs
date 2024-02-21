@@ -7,40 +7,59 @@ use core::{
 use std::{borrow::Cow, fmt::Display, fs, iter::from_fn, ops::Deref};
 use termion::{
     color::Rgb,
-    style::{Bold, Faint, Italic, Reset, Underline},
+    style::{Bold, Faint, Italic, NoItalic, Reset, Underline},
 };
 
 const INDENTATION: &str = "  ";
 const INDENT: usize = INDENTATION.len();
+
 const OCEAN_BLUE: Rgb = Rgb(36, 113, 163);
 const TURQUOISE: Rgb = Rgb(64, 224, 208);
 const RUBY_RED: Rgb = Rgb(220, 20, 60);
 const SILVER_GRAY: Rgb = Rgb(169, 169, 169);
-const MAUVE: Rgb = Rgb(224, 176, 255);
+const CORAL_PINK: Rgb = Rgb(255, 127, 80);
+const VIOLET: Rgb = Rgb(238, 130, 238);
+const PEACH: Rgb = Rgb(255, 218, 185);
+const SALMON_PINK: Rgb = Rgb(255, 145, 164);
+const SANDY_BROWN: Rgb = Rgb(244, 164, 96);
+
+// const SUNFLOWER_YELLOW: Rgb = Rgb(255, 255, 85);
+// const MANGO_ORANGE: Rgb = Rgb(255, 179, 71);
+// const SEAFOAM_GREEN: Rgb = Rgb(50, 205, 153);
+// const COBALT_BLUE: Rgb = Rgb(0, 71, 171);
+// const SLATE_GRAY: Rgb = Rgb(112, 128, 144);
+// const LAVENDER: Rgb = Rgb(230, 230, 250);
+// const BURGUNDY: Rgb = Rgb(128, 0, 32);
 // const SUNSET_ORANGE: Rgb = Rgb(255, 140, 79);
+// const GOLDEN_YELLOW: Rgb = Rgb(255, 223, 0);
+// const SKY_BLUE: Rgb = Rgb(135, 206, 250);
+// const EARTH_BROWN: Rgb = Rgb(139, 69, 19);
+// const MINT_GREEN: Rgb = Rgb(152, 255, 152);
+// const MAUVE: Rgb = Rgb(224, 176, 255);
 // const EMERALD_GREEN: Rgb = Rgb(0, 158, 96);
 // const AMETHYST_PURPLE: Rgb = Rgb(138, 43, 226);
 // const GOLDENROD_YELLOW: Rgb = Rgb(218, 165, 32);
 // const LIME_GREEN: Rgb = Rgb(50, 205, 50);
 // const TEAL: Rgb = Rgb(0, 128, 128);
-// const CORAL_PINK: Rgb = Rgb(255, 127, 80);
 // const SAFFRON_YELLOW: Rgb = Rgb(244, 196, 48);
 // const INDIGO: Rgb = Rgb(75, 0, 130);
 // const AQUA: Rgb = Rgb(0, 255, 255);
-// const VIOLET: Rgb = Rgb(238, 130, 238);
 // const FOREST_GREEN: Rgb = Rgb(34, 139, 34);
-// const PEACH: Rgb = Rgb(255, 218, 185);
 // const STEEL_BLUE: Rgb = Rgb(70, 130, 180);
 // const CHOCOLATE_BROWN: Rgb = Rgb(139, 69, 19);
 // const CORNFLOWER_BLUE: Rgb = Rgb(100, 149, 237);
 // const OLIVE_GREEN: Rgb = Rgb(128, 128, 0);
 
 const ROOT: Rgb = RUBY_RED;
+const HELP: Rgb = PEACH;
 const GROUP: Rgb = OCEAN_BLUE;
 const VERB: Rgb = TURQUOISE;
 const OPTION: Rgb = TURQUOISE;
-const USAGE: Rgb = MAUVE;
+const USAGE: Rgb = VIOLET;
 const NOTE: Rgb = SILVER_GRAY;
+const LINK: Rgb = SALMON_PINK;
+const SUMMARY: Rgb = SANDY_BROWN;
+const TAGS: Rgb = CORAL_PINK;
 
 struct Helper<'a> {
     buffer: &'a mut String,
@@ -207,9 +226,22 @@ impl<'a> Helper<'a> {
         Ok(())
     }
 
-    fn help(&mut self, metas: &[Meta]) -> Result<(), fmt::Error> {
+    fn summary(&mut self, metas: &[Meta]) -> Result<(), fmt::Error> {
         let mut join = false;
         let mut cursor = 0;
+        let mut has = false;
+        for meta in visible(metas) {
+            if let Meta::Summary(value) = meta {
+                if !value.chars().all(char::is_whitespace) {
+                    self.wrap(value, "", "", &mut cursor, &mut join)?;
+                    has = true;
+                }
+            }
+        }
+        if has {
+            return Ok(());
+        }
+
         for meta in visible(metas) {
             if let Meta::Help(value) = meta {
                 if !value.chars().all(char::is_whitespace) {
@@ -301,8 +333,9 @@ impl<'a> Helper<'a> {
             match meta {
                 Meta::Help(value) => {
                     helper.indentation()?;
+                    write!(helper.buffer, "{}", HELP.fg_string())?;
                     helper.wrap(value, "", "", &mut 0, &mut false)?;
-                    writeln!(helper.buffer)?;
+                    writeln!(helper.buffer, "{Reset}")?;
                 }
                 Meta::Note(value) => {
                     helper.indentation()?;
@@ -315,33 +348,8 @@ impl<'a> Helper<'a> {
                     )?;
                     writeln!(helper.buffer)?;
                 }
-                Meta::Usage(value) => {
-                    helper.indentation()?;
-                    helper.wrap(
-                        value,
-                        format_args!("{}{Underline}", USAGE.fg_string()),
-                        format_args!("{Reset}"),
-                        &mut 0,
-                        &mut false,
-                    )?;
-                    writeln!(helper.buffer)?;
-                }
                 Meta::Root(metas) => {
-                    writeln!(helper.buffer)?;
-                    helper.indentation()?;
-                    if helper.names(
-                        metas,
-                        true,
-                        true,
-                        format_args!("{}{Bold}", ROOT.fg_string()),
-                        &mut 0,
-                    )? > 0
-                    {
-                        helper.versions(metas, " ")?;
-                        helper.authors(metas, format_args!("{Italic}{Faint} by "))?;
-                        write!(helper.buffer, "{Reset}")?;
-                    }
-                    writeln!(helper.buffer)?;
+                    helper.write_header(metas)?;
                     helper.node(metas, depth + 1)?;
                 }
                 Meta::Group(metas) => {
@@ -362,34 +370,22 @@ impl<'a> Helper<'a> {
                     }
                 }
                 Meta::Verb(metas) if depth == 0 => {
-                    helper.indentation()?;
-                    if helper.names(
-                        metas,
-                        true,
-                        true,
-                        format_args!("{}{Bold}", VERB.fg_string()),
-                        &mut 0,
-                    )? > 0
-                    {
-                        helper.versions(metas, " ")?;
-                        writeln!(helper.buffer, "{Reset}")?;
-                    } else {
-                        writeln!(helper.buffer)?;
-                    }
-                    helper.indent().node(metas, depth + 1)?;
-                    writeln!(helper.buffer)?;
+                    helper.write_header(metas)?;
+                    helper.node(metas, depth + 1)?;
                 }
                 Meta::Verb(metas) => {
                     helper.indentation()?;
-                    helper
-                        .write_columns(metas, &columns, true, &mut 0)?
-                        .help(metas)?;
-                    writeln!(helper.buffer)?;
+                    let mut helper = helper.write_columns(metas, &columns, true, &mut 0)?;
+                    helper.write(format_args!("{}", SUMMARY.fg_string()))?;
+                    helper.summary(metas)?;
+                    writeln!(helper.buffer, "{Reset}")?;
                 }
                 Meta::Option(metas) => {
                     helper.indentation()?;
                     let mut helper = helper.write_columns(metas, &columns, false, &mut option)?;
-                    let width = helper.write_with(|helper| helper.help(metas))?;
+                    helper.write(format_args!("{}", SUMMARY.fg_string()))?;
+                    let width = helper.write_with(|helper| helper.summary(metas))?;
+                    helper.write(format_args!("{}", TAGS.fg_string()))?;
                     let buffer = helper.scope(|mut helper| helper.tags(metas))?;
                     if width + buffer.len() > helper.width - helper.indent {
                         writeln!(helper.buffer)?;
@@ -402,6 +398,67 @@ impl<'a> Helper<'a> {
                 _ => {}
             }
         }
+        Ok(())
+    }
+
+    fn write_header(&mut self, metas: &[Meta]) -> fmt::Result {
+        const BAR: char = '│';
+
+        writeln!(self.buffer)?;
+        self.indentation()?;
+        if self.names(
+            metas,
+            true,
+            true,
+            format_args!("{}{Bold}\n{BAR} ", ROOT.fg_string()),
+            &mut 0,
+        )? > 0
+        {
+            self.versions(metas, " ")?;
+            self.authors(metas, format_args!("{Italic}{Faint} by "))?;
+            writeln!(self.buffer)?;
+        }
+        let mut has = false;
+        let buffer = self.scope(|mut helper| {
+            write!(helper.buffer, "{}", LINK.fg_string())?;
+            has |= helper.join(metas, format_args!("\n{BAR}> "), " ", |meta| match meta {
+                Meta::Summary(value) => Some(Cow::Borrowed(value)),
+                _ => None,
+            })? > 0;
+            write!(helper.buffer, "{Italic}")?;
+            has |= helper.join(metas, format_args!("\n{BAR}> "), " ", |meta| match meta {
+                Meta::Home(value) => Some(Cow::Borrowed(value)),
+                _ => None,
+            })? > 0;
+            has |= helper.join(metas, format_args!("\n{BAR}> "), " ", |meta| match meta {
+                Meta::Repository(value) => Some(Cow::Borrowed(value)),
+                _ => None,
+            })? > 0;
+            write!(helper.buffer, "{NoItalic}{}", USAGE.fg_string())?;
+            has |= helper.join(
+                metas,
+                if has {
+                    format!("\n{BAR}\n{BAR}> {Underline}")
+                } else {
+                    format!("\n{BAR}> {Underline}")
+                },
+                " ",
+                |meta| match meta {
+                    Meta::Usage(value) => Some(Cow::Borrowed(value)),
+                    _ => None,
+                },
+            )? > 0;
+            Ok(())
+        })?;
+
+        if has {
+            writeln!(
+                self.buffer,
+                "{Reset}{}{Bold}{BAR}{Reset}{buffer}{Reset}",
+                ROOT.fg_string()
+            )?;
+        }
+
         Ok(())
     }
 
@@ -427,7 +484,6 @@ impl<'a> Helper<'a> {
                 helper.names(metas, false, true, "", option)?;
                 Ok(())
             })?;
-            format += helper.write(format_args!("{Reset}"))?;
             format += helper.write(format_args!("{Faint}"))?;
             helper.write_column(columns.types + 2, format_args!("{INDENTATION}"), |helper| {
                 if helper.types(metas, "<")? > 0 {

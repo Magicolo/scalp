@@ -77,22 +77,9 @@ macro_rules! header {
                 .trim()
                 .split(':')
                 .fold(builder, |builder, author| builder.author(author.trim()));
-
-            let description = env!("CARGO_PKG_DESCRIPTION").trim();
-            if !description.chars().all(char::is_whitespace) {
-                builder = builder.help("").help(description)
-            }
-
-            let home = env!("CARGO_PKG_HOMEPAGE").trim();
-            if !home.chars().all(char::is_whitespace) {
-                builder = builder.help("").note(home)
-            }
-
-            let repository = env!("CARGO_PKG_REPOSITORY").trim();
-            if !repository.chars().all(char::is_whitespace) {
-                builder = builder.help("").note(repository)
-            }
-
+            builder = builder.summary(env!("CARGO_PKG_DESCRIPTION").trim());
+            builder = builder.home(env!("CARGO_PKG_HOMEPAGE").trim());
+            builder = builder.repository(env!("CARGO_PKG_REPOSITORY").trim());
             builder.help("")
         })
     };

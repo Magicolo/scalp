@@ -6,8 +6,9 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         .pipe(header!())
         .usage("Usage: scalp [OPTIONS]")
         .verb(|verb| verb.name("b").name("boba").help("Throws a Boba."))
-        .group(|group| group.name("Options:").options(Options::all(true, true)))
         .verb(|verb| verb.name("f").name("fett").help("Catches a Fett."))
+        .help("")
+        .group(|group| group.name("Options:").options(Options::all(true, true)))
         .note("A note.")
         .build()?
         .parse_with(["--help"], [("", "")]);
