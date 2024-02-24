@@ -34,7 +34,7 @@ fn main() -> Result<(), Error> {
         command: Command,
     }
 
-    let parser = Builder::new()
+    let parser = Parser::builder()
         .case(Case::Kebab { upper: false })
         .option(|option| option.name("d").name("debug").help("Debug mode.").default(false))
         .option(|option| option.name("y").name("yes").swizzle().default(false))

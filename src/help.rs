@@ -161,8 +161,7 @@ impl<'a, S: Style + ?Sized + 'a> Helper<'a, S> {
         value: &str,
         prefix: impl Format,
         suffix: impl Format,
-        pre: impl Format,
-        post: impl Format,
+        wrap: impl Format,
         cursor: &mut usize,
         has: &mut bool,
     ) -> Result<usize, fmt::Error> {
@@ -178,10 +177,8 @@ impl<'a, S: Style + ?Sized + 'a> Helper<'a, S> {
                 }
                 _ => {
                     width += self.write_line(())?;
-                    *cursor = 0;
-                    width += self.write(&pre)?;
-                    *cursor += self.indentation()?;
-                    width += self.write(&post)?;
+                    *cursor = self.indentation()?;
+                    width += self.write(&wrap)?;
                 }
             }
 
@@ -193,10 +190,8 @@ impl<'a, S: Style + ?Sized + 'a> Helper<'a, S> {
 
                 if *cursor + word.len() > self.style.width() {
                     width += self.write_line(())?;
-                    *cursor = 0;
-                    width += self.write(&pre)?;
-                    *cursor += self.indentation()?;
-                    width += self.write(&post)?;
+                    *cursor = self.indentation()?;
+                    width += self.write(&wrap)?;
                 }
                 *cursor += self.write(word)?;
             }
@@ -220,7 +215,7 @@ impl<'a, S: Style + ?Sized + 'a> Helper<'a, S> {
                 if !value.chars().all(char::is_whitespace) {
                     count += self.write_line(())?;
                     count += self.indentation()?;
-                    count += self.wrap(value, &prefix, "", "", &line, &mut 0, &mut false)?;
+                    count += self.wrap(value, &prefix, "", &line, &mut 0, &mut false)?;
                 }
             }
         }
@@ -241,13 +236,13 @@ impl<'a, S: Style + ?Sized + 'a> Helper<'a, S> {
         let mut width = 0;
         for meta in visible(metas) {
             if let Meta::Summary(value) = meta {
-                width += self.wrap(value, &prefix, &suffix, "", "", &mut cursor, &mut has)?;
+                width += self.wrap(value, &prefix, &suffix, "", &mut cursor, &mut has)?;
             }
         }
         if width == 0 {
             for meta in visible(metas) {
                 if let Meta::Help(value) = meta {
-                    width += self.wrap(value, &prefix, &suffix, "", "", &mut cursor, &mut has)?;
+                    width += self.wrap(value, &prefix, &suffix, "", &mut cursor, &mut has)?;
                 }
             }
         }
@@ -330,7 +325,6 @@ impl<'a, S: Style + ?Sized + 'a> Helper<'a, S> {
                         helper.style.begin(Item::Help),
                         helper.style.end(Item::Help),
                         "",
-                        "",
                         &mut 0,
                         &mut false,
                     )?;
@@ -345,7 +339,6 @@ impl<'a, S: Style + ?Sized + 'a> Helper<'a, S> {
                         value,
                         helper.style.begin(Item::Note),
                         helper.style.end(Item::Note),
-                        "",
                         "",
                         &mut 0,
                         &mut false,
@@ -410,7 +403,6 @@ impl<'a, S: Style + ?Sized + 'a> Helper<'a, S> {
                         &buffer,
                         helper.style.begin(Item::Tag),
                         helper.style.end(Item::Tag),
-                        "",
                         "",
                         &mut width,
                         &mut false,
