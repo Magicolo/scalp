@@ -226,8 +226,8 @@ impl<'a> Context<'a> {
 }
 
 impl<T, P: Parse<Value = Option<T>>> Parser<P> {
-    pub fn parse(&mut self) -> Result<T, Error> {
-        self.parse_with(std::env::args(), std::env::vars())
+    pub fn parse(&self) -> Result<T, Error> {
+        self.parse_with(std::env::args().skip(1), std::env::vars())
     }
 
     pub fn parse_with<

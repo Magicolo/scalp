@@ -240,7 +240,7 @@ impl Style for Default {
 
     #[inline]
     fn width(&self) -> usize {
-        terminal_size().map_or(64, |pair| pair.0 as usize - 25)
+        terminal_size().map_or(64, |pair| pair.0 as usize - 32)
     }
 
     #[inline]
