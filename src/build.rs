@@ -691,7 +691,7 @@ impl Builder<scope::Root> {
             buffer: String::new(),
             parse: Ok(At(())),
             scope: scope::Root::new(),
-            style: Box::new(style::Default),
+            style: Box::new(style::Termion),
         }
     }
 

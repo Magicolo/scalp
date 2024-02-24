@@ -9,7 +9,7 @@ use termion::{
     terminal_size,
 };
 
-pub struct Default;
+pub struct Termion;
 pub struct Plain;
 
 #[derive(Clone, Copy)]
@@ -232,7 +232,7 @@ macro_rules! dynamic {
         &[$(&$value as &dyn Format),*]
     };
 }
-impl Style for Default {
+impl Style for Termion {
     #[inline]
     fn indent(&self) -> usize {
         2
