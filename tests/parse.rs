@@ -1,5 +1,5 @@
 use checkito::*;
-use scalp::{Builder, Case, Error};
+use scalp::{Case, Error, Parser};
 use std::{error, result, str::FromStr};
 
 type Result = result::Result<(), Box<dyn error::Error>>;
@@ -7,14 +7,14 @@ const COUNT: usize = 1000;
 
 #[test]
 fn empty_parser_builds() -> Result {
-    Builder::new().build()?;
+    Parser::builder().build()?;
     Ok(())
 }
 
 #[test]
 fn empty_parser_with_name_builds() -> Result {
     String::generator().check(COUNT, |name| {
-        Builder::new().name(name.clone()).build().is_ok()
+        Parser::builder().name(name.clone()).build().is_ok()
     })?;
     Ok(())
 }
@@ -22,7 +22,7 @@ fn empty_parser_with_name_builds() -> Result {
 #[test]
 fn empty_parser_with_help_builds() -> Result {
     String::generator().check(COUNT, |name| {
-        Builder::new().help(name.clone()).build().is_ok()
+        Parser::builder().help(name.clone()).build().is_ok()
     })?;
     Ok(())
 }
@@ -30,7 +30,7 @@ fn empty_parser_with_help_builds() -> Result {
 #[test]
 fn missing_option_value_with_short() -> Result {
     (regex!("[~±@£¢¤¬¦²³¼½¾`^¯_]+"), regex!("[a-zA-Z]")).check(COUNT, |(short, name)| {
-        let parser = Builder::new()
+        let parser = Parser::builder()
             .case(Case::Same)
             .prefix(short.clone(), "--")
             .option::<usize, _>(|option| option.name(name.clone()))
@@ -46,7 +46,7 @@ fn missing_option_value_with_short() -> Result {
 #[test]
 fn missing_option_value_with_long() -> Result {
     (regex!("[~±@£¢¤¬¦²³¼½¾`^¯_]+"), regex!("[a-zA-Z]{2,}")).check(COUNT, |(long, name)| {
-        let parser = Builder::new()
+        let parser = Parser::builder()
             .case(Case::Same)
             .prefix("-", long.clone())
             .option::<isize, _>(|option| option.name(name.clone()))
@@ -62,7 +62,7 @@ fn missing_option_value_with_long() -> Result {
 #[test]
 fn fails_to_parse_invalid_value() -> Result {
     (regex!("[a-zA-Z]{2,}"), ..-1).check(COUNT, |(name, value)| {
-        let parser = Builder::new()
+        let parser = Parser::builder()
             .case(Case::Same)
             .option::<usize, _>(|option| option.name(name.clone()))
             .build()
@@ -91,7 +91,7 @@ fn verb_with_no_option_allows_for_root_options_before_and_after() -> Result {
             };
 
             let (v, u) = (*v, *u);
-            let parser = Builder::new()
+            let parser = Parser::builder()
                 .case(Case::Same)
                 .option(|option| option.name(a.clone()).default(v))
                 .option(|option| option.name(b.clone()).default(u))
@@ -115,7 +115,7 @@ fn verb_with_no_option_allows_for_root_options_before_and_after() -> Result {
 
 #[test]
 fn boolean_option_swizzling() -> Result {
-    let parser = Builder::new()
+    let parser = Parser::builder()
         .option(|option| option.name("a").swizzle().default(false))
         .option(|option| option.name("b").swizzle().default(false))
         .option(|option| option.name("c").swizzle().default(false))
@@ -130,7 +130,7 @@ fn boolean_option_swizzling() -> Result {
 
 #[test]
 fn invalid_swizzling() -> Result {
-    let parser = Builder::new()
+    let parser = Parser::builder()
         .option(|option| option.name("a").swizzle().default(false))
         .option(|option| option.name("b").default(false))
         .build()?;
@@ -172,7 +172,7 @@ fn parses_enum_value() -> Result {
         }
     }
 
-    let parser = Builder::new()
+    let parser = Parser::builder()
         .option::<Casing, _>(|option| {
             option
                 .name("c")

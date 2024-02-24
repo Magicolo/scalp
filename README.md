@@ -51,7 +51,7 @@ fn main() -> Result<(), Error> {
             .any_or("Missing command.")
         )
         .map(|(debug, yes, force, recurse, command)| Root { debug, yes, recurse, force, command })
-        .help("")
+        .line()
         .note("Documentation: https://docs.rs/scalp/latest/scalp/")
         .build()?;
 

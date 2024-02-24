@@ -192,9 +192,9 @@ fn commands(builder: Builder<scope::Group>) -> Builder<scope::Group, impl Parse<
             .name("kill")
             .summary("Kill one or more running containers.")
             .usage("Usage: docker kill [OPTIONS] CONTAINER [CONTAINER...]")
-            .help("")
+            .line()
             .note("Aliases: docker container kill, docker kill")
-            .help("")
+            .line()
             .option(|option| option
                 .name("s")
                 .name("signal")
@@ -268,12 +268,13 @@ fn global_options(builder: Builder<scope::Group>) -> Builder<scope::Group, impl 
 }
 
 fn main() -> Result<(), Error> {
-    let parser = Builder::new()
+    let parser = Parser::builder()
+        // .style(style::Plain)
         .name(env!("CARGO_BIN_NAME").trim())
         .version(env!("CARGO_PKG_VERSION").trim())
         .summary("A self-sufficient runtime for containers.")
         .usage("Usage: docker [OPTIONS] COMMAND")
-        .help("")
+        .line()
         .group(|group| group
             .group(common_commands)
             .group(management_commands)
@@ -284,12 +285,12 @@ fn main() -> Result<(), Error> {
         )
         .group(global_options)
         .help("Run 'docker COMMAND --help' for more information on a command.")
-        .help("")
+        .line()
         .note("For more help on how to use Docker, head to https://docs.docker.com/go/guides/")
         .map(|(command, global)| Docker { command, global })
         .build()?;
     let arguments = [
-        "kill", "--help", "--config", "boba", "--debug", "false", "-H", "jango", "--host", "karl", "kill",
+        "--help", "--config", "boba", "--debug", "false", "-H", "jango", "--host", "karl", "kill",
     ];
     let environment = [("DOCKER_HOST", "fett")];
     let docker = match parser.parse_with(arguments, environment) {

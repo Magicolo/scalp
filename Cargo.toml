@@ -1,11 +1,11 @@
 [package]
 name = "scalp"
-version = "0.2.4"
+version = "0.3.0"
 authors = ["Magicolo <magicololand@gmail.com>"]
 edition = "2021"
 readme = "README.md"
 documentation = "https://docs.rs/scalp/latest/scalp/"
-description = "A declarative parsing library for command-line interfaces."
+description = "A declarative parsing library for pretty and highly customizable command-line interfaces."
 license = "MIT"
 repository = "https://github.com/Magicolo/scalp"
 keywords = ["cli", "parse", "command-line", "terminal", "pretty"]
@@ -15,7 +15,6 @@ rust-version = "1.70.0"
 
 [dependencies]
 termion = "3.0.0"
-term_size = "0.3.2"
 orn = "0.3.0"
 regex = "1.10.3"
 

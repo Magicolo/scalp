@@ -10,7 +10,7 @@ use crate::{
     },
     scope::{self, Scope},
     stack::Stack,
-    AUTHOR, BREAK, HELP, LICENSE, MAXIMUM, SHIFT, VERSION,
+    style, AUTHOR, BREAK, HELP, LICENSE, MAXIMUM, SHIFT, VERSION,
 };
 use core::{any::TypeId, default, fmt, marker::PhantomData, num::NonZeroUsize, str::FromStr};
 use std::{any, borrow::Cow, collections::hash_map::Entry, convert::Infallible};
@@ -23,6 +23,7 @@ pub struct Builder<S, P = At<()>> {
     buffer: String,
     parse: Result<P, Error>,
     scope: S,
+    style: Box<dyn style::Style>,
 }
 
 pub struct Unit;
@@ -482,6 +483,7 @@ impl<S, P> Builder<S, P> {
             short: self.short,
             long: self.long,
             buffer: self.buffer,
+            style: self.style,
             scope: scope(self.scope),
             parse: self.parse.and_then(parse),
         }
@@ -496,6 +498,7 @@ impl<S, P> Builder<S, P> {
                 short: self.short,
                 long: self.long,
                 buffer: self.buffer,
+                style: self.style,
                 scope,
                 parse: self.parse,
             },
@@ -512,6 +515,7 @@ impl<S, P> Builder<S, P> {
                 short: self.short,
                 long: self.long,
                 buffer: self.buffer,
+                style: self.style,
                 scope,
                 parse: Ok(parse),
             },
@@ -521,7 +525,16 @@ impl<S, P> Builder<S, P> {
 
 impl<S: Scope, P> Builder<S, P> {
     pub fn help(self, help: impl Into<Cow<'static, str>>) -> Self {
-        self.meta(Meta::Help(help.into()))
+        let help = help.into();
+        if help.chars().all(char::is_whitespace) {
+            self
+        } else {
+            self.meta(Meta::Help(help))
+        }
+    }
+
+    pub fn line(self) -> Self {
+        self.meta(Meta::Line)
     }
 
     pub fn note(self, note: impl Into<Cow<'static, str>>) -> Self {
@@ -661,8 +674,14 @@ impl<S: scope::Version, P> Builder<S, P> {
     }
 }
 
+impl Parser<()> {
+    pub fn builder() -> Builder<scope::Root> {
+        Builder::new()
+    }
+}
+
 impl Builder<scope::Root> {
-    pub fn new() -> Self {
+    fn new() -> Self {
         let case = Case::Kebab { upper: false };
         Self {
             case,
@@ -672,6 +691,7 @@ impl Builder<scope::Root> {
             buffer: String::new(),
             parse: Ok(At(())),
             scope: scope::Root::new(),
+            style: Box::new(style::Default),
         }
     }
 
@@ -704,22 +724,25 @@ impl Builder<scope::Root> {
 }
 
 impl<P> Builder<scope::Root, P> {
-    pub fn build(self) -> Result<Parser<Node<P>>, Error>
-    where
-        P: Parse,
-    {
+    pub fn build(self) -> Result<Parser<Node<P>>, Error> {
         let (root, mut builder) = self.swap_scope(());
         let mut meta = Meta::from(root);
         let indices = builder.descend(&mut meta)?;
         Ok(Parser {
             short: builder.short,
             long: builder.long,
+            style: builder.style,
             parse: Node {
                 meta,
                 indices,
                 parse: builder.parse?,
             },
         })
+    }
+
+    pub fn style<S: style::Style + 'static>(mut self, style: S) -> Self {
+        self.style = Box::new(style);
+        self
     }
 
     pub fn name(self, name: impl Into<Cow<'static, str>>) -> Self {

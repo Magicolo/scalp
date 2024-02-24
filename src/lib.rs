@@ -7,6 +7,7 @@ pub mod parse;
 pub mod scope;
 mod spell;
 mod stack;
+pub mod style;
 
 pub use crate::{
     build::Builder,
@@ -80,7 +81,7 @@ macro_rules! header {
             builder = builder.summary(env!("CARGO_PKG_DESCRIPTION").trim());
             builder = builder.home(env!("CARGO_PKG_HOMEPAGE").trim());
             builder = builder.repository(env!("CARGO_PKG_REPOSITORY").trim());
-            builder.help("")
+            builder.line()
         })
     };
 }
