@@ -1,7 +1,7 @@
 <div align="center"> <h1> scalp </h1> </div>
 
 <p align="center">
-    <em> A declarative parsing library for command-line interfaces. It provides a highly composable and extensible `Parse` trait that ensures comparative performance to a macro-full approach while offering greater flexibility and understandability.
+    <em> A declarative parsing library for pretty and highly customizable command-line interfaces. It provides a composable and extensible `Parse` trait that ensures comparative performance to a macro-full approach while offering greater flexibility and understandability.
 
 *Less magic, more control, same speed.* </em>
 </p>
