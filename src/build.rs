@@ -819,22 +819,22 @@ impl Builder<scope::Option, Value<Unit>> {
     pub fn parse<T: FromStr + 'static>(self) -> Builder<scope::Option, Value<T>> {
         let case = self.case;
         self.parse_with(
-            TypeId::of::<T>() == TypeId::of::<bool>(),
+            if TypeId::of::<T>() == TypeId::of::<bool>() {
+                Some("true")
+            } else {
+                None
+            },
             type_name::<T>(case),
         )
     }
 
     pub fn parse_with<T: FromStr>(
         self,
-        tag: bool,
+        tag: Option<impl Into<Cow<'static, str>>>,
         format: impl Into<Cow<'static, str>>,
     ) -> Builder<scope::Option, Value<T>> {
         self.meta(Meta::Type(format.into())).map_parse(|_| Value {
-            tag: if tag {
-                Some(Cow::Borrowed("true"))
-            } else {
-                None
-            },
+            tag: tag.map(Into::into),
             _marker: PhantomData,
         })
     }

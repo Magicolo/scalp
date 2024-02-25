@@ -255,9 +255,10 @@ fn global_options(builder: Builder<scope::Group>) -> Builder<scope::Group, impl 
             .valid("w(arn)?")
             .valid("e(rror)?")
             .valid("f(atal)?")
+            .valid("[idwef]+")
             .default(LogLevel::Info)
         )
-        .options(Options::all(true, true))
+        .options(Options::common(true, true))
         .map(|(config, context, debug, host, log_level)| GlobalOptions {
             config,
             context,
@@ -269,12 +270,10 @@ fn global_options(builder: Builder<scope::Group>) -> Builder<scope::Group, impl 
 
 fn main() -> Result<(), Error> {
     let parser = Parser::builder()
-        // .style(style::Plain)
         .name(env!("CARGO_BIN_NAME").trim())
         .version(env!("CARGO_PKG_VERSION").trim())
         .summary("A self-sufficient runtime for containers.")
         .usage("Usage: docker [OPTIONS] COMMAND")
-        .line()
         .group(|group| group
             .group(common_commands)
             .group(management_commands)
