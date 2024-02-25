@@ -3,6 +3,7 @@ use crate::{
     LICENSE, MASK, SHIFT, VERSION,
 };
 use core::{cmp::min, marker::PhantomData, num::NonZeroUsize};
+use orn::*;
 use regex::RegexSet;
 use std::{
     borrow::Cow,
@@ -622,13 +623,13 @@ impl<T, P: Parse<Value = Option<T>>, I, N: Fn() -> I, F: Fn(&mut I, T)> Parse fo
 }
 
 macro_rules! at {
-    ($($name: ident, $index: tt),*) => {
-        impl< $($name: Parse,)*> Parse for At<($($name,)*)> {
+    ($or: ident $(, $name: ident, $index: tt)*) => {
+        impl<$($name: Parse,)*> Parse for At<($($name,)*)> {
             type State = ($($name::State,)*);
             type Value = ($($name::Value,)*);
 
-            fn initialize(&self, mut _context: Context) -> Result<Self::State, Error> {
-                Ok(($(self.0.$index.initialize(_context.own())?,)*))
+            fn initialize(&self, context: Context) -> Result<Self::State, Error> {
+                self.0.initialize(context)
             }
 
             fn parse(&self, mut _state: Self::State, mut _context: Context) -> Result<Self::State, Error> {
@@ -641,8 +642,54 @@ macro_rules! at {
                 Ok(_state)
             }
 
+            fn finalize(&self, state: Self::State, context: Context) -> Result<Self::Value, Error> {
+                self.0.finalize(state, context)
+            }
+        }
+
+        impl<$($name: Parse,)*> Parse for ($($name,)*) {
+            type State = ($($name::State,)*);
+            type Value = ($($name::Value,)*);
+
+            fn initialize(&self, mut _context: Context) -> Result<Self::State, Error> {
+                Ok(($(self.$index.initialize(_context.own())?,)*))
+            }
+
+            fn parse(&self, _state: Self::State, mut _context: Context) -> Result<Self::State, Error> {
+                Ok(($(self.$index.parse(_state.$index, _context.own())?,)*))
+            }
+
             fn finalize(&self, _state: Self::State, mut _context: Context) -> Result<Self::Value, Error> {
-                Ok(($(self.0.$index.finalize(_state.$index, _context.own())?,)*))
+                Ok(($(self.$index.finalize(_state.$index, _context.own())?,)*))
+            }
+        }
+
+        impl<$($name: Parse,)*> Parse for $or<$($name),*> {
+            type State = $or<$($name::State),*>;
+            type Value = $or<$($name::Value),*>;
+
+            fn initialize(&self, _context: Context) -> Result<Self::State, Error> {
+                match self {
+                    $($or::$name(value) => Ok($or::$name(value.initialize(_context)?)),)*
+                    #[allow(unreachable_patterns)]
+                    _ => Err(Error::InvalidParseState),
+                }
+            }
+
+            fn parse(&self, state: Self::State, _context: Context) -> Result<Self::State, Error> {
+                match (self, state) {
+                    $(($or::$name(value), $or::$name(state)) => Ok($or::$name(value.parse(state, _context)?)),)*
+                    #[allow(unreachable_patterns)]
+                    _ => Err(Error::InvalidParseState),
+                }
+            }
+
+            fn finalize(&self, state: Self::State, _context: Context) -> Result<Self::Value, Error> {
+                match (self, state) {
+                    $(($or::$name(value), $or::$name(state)) => Ok($or::$name(value.finalize(state, _context)?)),)*
+                    #[allow(unreachable_patterns)]
+                    _ => Err(Error::InvalidParseState),
+                }
             }
         }
 
@@ -658,104 +705,106 @@ macro_rules! at {
     };
 }
 
-at!();
-at!(P0, 0);
-at!(P0, 0, P1, 1);
-at!(P0, 0, P1, 1, P2, 2);
-at!(P0, 0, P1, 1, P2, 2, P3, 3);
-at!(P0, 0, P1, 1, P2, 2, P3, 3, P4, 4);
-at!(P0, 0, P1, 1, P2, 2, P3, 3, P4, 4, P5, 5);
-at!(P0, 0, P1, 1, P2, 2, P3, 3, P4, 4, P5, 5, P6, 6);
-at!(P0, 0, P1, 1, P2, 2, P3, 3, P4, 4, P5, 5, P6, 6, P7, 7);
-at!(P0, 0, P1, 1, P2, 2, P3, 3, P4, 4, P5, 5, P6, 6, P7, 7, P8, 8);
-at!(P0, 0, P1, 1, P2, 2, P3, 3, P4, 4, P5, 5, P6, 6, P7, 7, P8, 8, P9, 9);
-at!(P0, 0, P1, 1, P2, 2, P3, 3, P4, 4, P5, 5, P6, 6, P7, 7, P8, 8, P9, 9, P10, 10);
-at!(P0, 0, P1, 1, P2, 2, P3, 3, P4, 4, P5, 5, P6, 6, P7, 7, P8, 8, P9, 9, P10, 10, P11, 11);
+at!(Or0);
+at!(Or1, T0, 0);
+at!(Or2, T0, 0, T1, 1);
+at!(Or3, T0, 0, T1, 1, T2, 2);
+at!(Or4, T0, 0, T1, 1, T2, 2, T3, 3);
+at!(Or5, T0, 0, T1, 1, T2, 2, T3, 3, T4, 4);
+at!(Or6, T0, 0, T1, 1, T2, 2, T3, 3, T4, 4, T5, 5);
+at!(Or7, T0, 0, T1, 1, T2, 2, T3, 3, T4, 4, T5, 5, T6, 6);
+at!(Or8, T0, 0, T1, 1, T2, 2, T3, 3, T4, 4, T5, 5, T6, 6, T7, 7);
+at!(Or9, T0, 0, T1, 1, T2, 2, T3, 3, T4, 4, T5, 5, T6, 6, T7, 7, T8, 8);
+at!(Or10, T0, 0, T1, 1, T2, 2, T3, 3, T4, 4, T5, 5, T6, 6, T7, 7, T8, 8, T9, 9);
+at!(Or11, T0, 0, T1, 1, T2, 2, T3, 3, T4, 4, T5, 5, T6, 6, T7, 7, T8, 8, T9, 9, T10, 10);
+at!(Or12, T0, 0, T1, 1, T2, 2, T3, 3, T4, 4, T5, 5, T6, 6, T7, 7, T8, 8, T9, 9, T10, 10, T11, 11);
 at!(
-    P0, 0, P1, 1, P2, 2, P3, 3, P4, 4, P5, 5, P6, 6, P7, 7, P8, 8, P9, 9, P10, 10, P11, 11, P12, 12
+    Or13, T0, 0, T1, 1, T2, 2, T3, 3, T4, 4, T5, 5, T6, 6, T7, 7, T8, 8, T9, 9, T10, 10, T11, 11,
+    T12, 12
 );
 at!(
-    P0, 0, P1, 1, P2, 2, P3, 3, P4, 4, P5, 5, P6, 6, P7, 7, P8, 8, P9, 9, P10, 10, P11, 11, P12,
-    12, P13, 13
+    Or14, T0, 0, T1, 1, T2, 2, T3, 3, T4, 4, T5, 5, T6, 6, T7, 7, T8, 8, T9, 9, T10, 10, T11, 11,
+    T12, 12, T13, 13
 );
 at!(
-    P0, 0, P1, 1, P2, 2, P3, 3, P4, 4, P5, 5, P6, 6, P7, 7, P8, 8, P9, 9, P10, 10, P11, 11, P12,
-    12, P13, 13, P14, 14
+    Or15, T0, 0, T1, 1, T2, 2, T3, 3, T4, 4, T5, 5, T6, 6, T7, 7, T8, 8, T9, 9, T10, 10, T11, 11,
+    T12, 12, T13, 13, T14, 14
 );
 at!(
-    P0, 0, P1, 1, P2, 2, P3, 3, P4, 4, P5, 5, P6, 6, P7, 7, P8, 8, P9, 9, P10, 10, P11, 11, P12,
-    12, P13, 13, P14, 14, P15, 15
+    Or16, T0, 0, T1, 1, T2, 2, T3, 3, T4, 4, T5, 5, T6, 6, T7, 7, T8, 8, T9, 9, T10, 10, T11, 11,
+    T12, 12, T13, 13, T14, 14, T15, 15
 );
 at!(
-    P0, 0, P1, 1, P2, 2, P3, 3, P4, 4, P5, 5, P6, 6, P7, 7, P8, 8, P9, 9, P10, 10, P11, 11, P12,
-    12, P13, 13, P14, 14, P15, 15, P16, 16
+    Or17, T0, 0, T1, 1, T2, 2, T3, 3, T4, 4, T5, 5, T6, 6, T7, 7, T8, 8, T9, 9, T10, 10, T11, 11,
+    T12, 12, T13, 13, T14, 14, T15, 15, T16, 16
 );
 at!(
-    P0, 0, P1, 1, P2, 2, P3, 3, P4, 4, P5, 5, P6, 6, P7, 7, P8, 8, P9, 9, P10, 10, P11, 11, P12,
-    12, P13, 13, P14, 14, P15, 15, P16, 16, P17, 17
+    Or18, T0, 0, T1, 1, T2, 2, T3, 3, T4, 4, T5, 5, T6, 6, T7, 7, T8, 8, T9, 9, T10, 10, T11, 11,
+    T12, 12, T13, 13, T14, 14, T15, 15, T16, 16, T17, 17
 );
 at!(
-    P0, 0, P1, 1, P2, 2, P3, 3, P4, 4, P5, 5, P6, 6, P7, 7, P8, 8, P9, 9, P10, 10, P11, 11, P12,
-    12, P13, 13, P14, 14, P15, 15, P16, 16, P17, 17, P18, 18
+    Or19, T0, 0, T1, 1, T2, 2, T3, 3, T4, 4, T5, 5, T6, 6, T7, 7, T8, 8, T9, 9, T10, 10, T11, 11,
+    T12, 12, T13, 13, T14, 14, T15, 15, T16, 16, T17, 17, T18, 18
 );
 at!(
-    P0, 0, P1, 1, P2, 2, P3, 3, P4, 4, P5, 5, P6, 6, P7, 7, P8, 8, P9, 9, P10, 10, P11, 11, P12,
-    12, P13, 13, P14, 14, P15, 15, P16, 16, P17, 17, P18, 18, P19, 19
+    Or20, T0, 0, T1, 1, T2, 2, T3, 3, T4, 4, T5, 5, T6, 6, T7, 7, T8, 8, T9, 9, T10, 10, T11, 11,
+    T12, 12, T13, 13, T14, 14, T15, 15, T16, 16, T17, 17, T18, 18, T19, 19
 );
 at!(
-    P0, 0, P1, 1, P2, 2, P3, 3, P4, 4, P5, 5, P6, 6, P7, 7, P8, 8, P9, 9, P10, 10, P11, 11, P12,
-    12, P13, 13, P14, 14, P15, 15, P16, 16, P17, 17, P18, 18, P19, 19, P20, 20
+    Or21, T0, 0, T1, 1, T2, 2, T3, 3, T4, 4, T5, 5, T6, 6, T7, 7, T8, 8, T9, 9, T10, 10, T11, 11,
+    T12, 12, T13, 13, T14, 14, T15, 15, T16, 16, T17, 17, T18, 18, T19, 19, T20, 20
 );
 at!(
-    P0, 0, P1, 1, P2, 2, P3, 3, P4, 4, P5, 5, P6, 6, P7, 7, P8, 8, P9, 9, P10, 10, P11, 11, P12,
-    12, P13, 13, P14, 14, P15, 15, P16, 16, P17, 17, P18, 18, P19, 19, P20, 20, P21, 21
+    Or22, T0, 0, T1, 1, T2, 2, T3, 3, T4, 4, T5, 5, T6, 6, T7, 7, T8, 8, T9, 9, T10, 10, T11, 11,
+    T12, 12, T13, 13, T14, 14, T15, 15, T16, 16, T17, 17, T18, 18, T19, 19, T20, 20, T21, 21
 );
 at!(
-    P0, 0, P1, 1, P2, 2, P3, 3, P4, 4, P5, 5, P6, 6, P7, 7, P8, 8, P9, 9, P10, 10, P11, 11, P12,
-    12, P13, 13, P14, 14, P15, 15, P16, 16, P17, 17, P18, 18, P19, 19, P20, 20, P21, 21, P22, 22
+    Or23, T0, 0, T1, 1, T2, 2, T3, 3, T4, 4, T5, 5, T6, 6, T7, 7, T8, 8, T9, 9, T10, 10, T11, 11,
+    T12, 12, T13, 13, T14, 14, T15, 15, T16, 16, T17, 17, T18, 18, T19, 19, T20, 20, T21, 21, T22,
+    22
 );
 at!(
-    P0, 0, P1, 1, P2, 2, P3, 3, P4, 4, P5, 5, P6, 6, P7, 7, P8, 8, P9, 9, P10, 10, P11, 11, P12,
-    12, P13, 13, P14, 14, P15, 15, P16, 16, P17, 17, P18, 18, P19, 19, P20, 20, P21, 21, P22, 22,
-    P23, 23
+    Or24, T0, 0, T1, 1, T2, 2, T3, 3, T4, 4, T5, 5, T6, 6, T7, 7, T8, 8, T9, 9, T10, 10, T11, 11,
+    T12, 12, T13, 13, T14, 14, T15, 15, T16, 16, T17, 17, T18, 18, T19, 19, T20, 20, T21, 21, T22,
+    22, T23, 23
 );
 at!(
-    P0, 0, P1, 1, P2, 2, P3, 3, P4, 4, P5, 5, P6, 6, P7, 7, P8, 8, P9, 9, P10, 10, P11, 11, P12,
-    12, P13, 13, P14, 14, P15, 15, P16, 16, P17, 17, P18, 18, P19, 19, P20, 20, P21, 21, P22, 22,
-    P23, 23, P24, 24
+    Or25, T0, 0, T1, 1, T2, 2, T3, 3, T4, 4, T5, 5, T6, 6, T7, 7, T8, 8, T9, 9, T10, 10, T11, 11,
+    T12, 12, T13, 13, T14, 14, T15, 15, T16, 16, T17, 17, T18, 18, T19, 19, T20, 20, T21, 21, T22,
+    22, T23, 23, T24, 24
 );
 at!(
-    P0, 0, P1, 1, P2, 2, P3, 3, P4, 4, P5, 5, P6, 6, P7, 7, P8, 8, P9, 9, P10, 10, P11, 11, P12,
-    12, P13, 13, P14, 14, P15, 15, P16, 16, P17, 17, P18, 18, P19, 19, P20, 20, P21, 21, P22, 22,
-    P23, 23, P24, 24, P25, 25
+    Or26, T0, 0, T1, 1, T2, 2, T3, 3, T4, 4, T5, 5, T6, 6, T7, 7, T8, 8, T9, 9, T10, 10, T11, 11,
+    T12, 12, T13, 13, T14, 14, T15, 15, T16, 16, T17, 17, T18, 18, T19, 19, T20, 20, T21, 21, T22,
+    22, T23, 23, T24, 24, T25, 25
 );
 at!(
-    P0, 0, P1, 1, P2, 2, P3, 3, P4, 4, P5, 5, P6, 6, P7, 7, P8, 8, P9, 9, P10, 10, P11, 11, P12,
-    12, P13, 13, P14, 14, P15, 15, P16, 16, P17, 17, P18, 18, P19, 19, P20, 20, P21, 21, P22, 22,
-    P23, 23, P24, 24, P25, 25, P26, 26
+    Or27, T0, 0, T1, 1, T2, 2, T3, 3, T4, 4, T5, 5, T6, 6, T7, 7, T8, 8, T9, 9, T10, 10, T11, 11,
+    T12, 12, T13, 13, T14, 14, T15, 15, T16, 16, T17, 17, T18, 18, T19, 19, T20, 20, T21, 21, T22,
+    22, T23, 23, T24, 24, T25, 25, T26, 26
 );
 at!(
-    P0, 0, P1, 1, P2, 2, P3, 3, P4, 4, P5, 5, P6, 6, P7, 7, P8, 8, P9, 9, P10, 10, P11, 11, P12,
-    12, P13, 13, P14, 14, P15, 15, P16, 16, P17, 17, P18, 18, P19, 19, P20, 20, P21, 21, P22, 22,
-    P23, 23, P24, 24, P25, 25, P26, 26, P27, 27
+    Or28, T0, 0, T1, 1, T2, 2, T3, 3, T4, 4, T5, 5, T6, 6, T7, 7, T8, 8, T9, 9, T10, 10, T11, 11,
+    T12, 12, T13, 13, T14, 14, T15, 15, T16, 16, T17, 17, T18, 18, T19, 19, T20, 20, T21, 21, T22,
+    22, T23, 23, T24, 24, T25, 25, T26, 26, T27, 27
 );
 at!(
-    P0, 0, P1, 1, P2, 2, P3, 3, P4, 4, P5, 5, P6, 6, P7, 7, P8, 8, P9, 9, P10, 10, P11, 11, P12,
-    12, P13, 13, P14, 14, P15, 15, P16, 16, P17, 17, P18, 18, P19, 19, P20, 20, P21, 21, P22, 22,
-    P23, 23, P24, 24, P25, 25, P26, 26, P27, 27, P28, 28
+    Or29, T0, 0, T1, 1, T2, 2, T3, 3, T4, 4, T5, 5, T6, 6, T7, 7, T8, 8, T9, 9, T10, 10, T11, 11,
+    T12, 12, T13, 13, T14, 14, T15, 15, T16, 16, T17, 17, T18, 18, T19, 19, T20, 20, T21, 21, T22,
+    22, T23, 23, T24, 24, T25, 25, T26, 26, T27, 27, T28, 28
 );
 at!(
-    P0, 0, P1, 1, P2, 2, P3, 3, P4, 4, P5, 5, P6, 6, P7, 7, P8, 8, P9, 9, P10, 10, P11, 11, P12,
-    12, P13, 13, P14, 14, P15, 15, P16, 16, P17, 17, P18, 18, P19, 19, P20, 20, P21, 21, P22, 22,
-    P23, 23, P24, 24, P25, 25, P26, 26, P27, 27, P28, 28, P29, 29
+    Or30, T0, 0, T1, 1, T2, 2, T3, 3, T4, 4, T5, 5, T6, 6, T7, 7, T8, 8, T9, 9, T10, 10, T11, 11,
+    T12, 12, T13, 13, T14, 14, T15, 15, T16, 16, T17, 17, T18, 18, T19, 19, T20, 20, T21, 21, T22,
+    22, T23, 23, T24, 24, T25, 25, T26, 26, T27, 27, T28, 28, T29, 29
 );
 at!(
-    P0, 0, P1, 1, P2, 2, P3, 3, P4, 4, P5, 5, P6, 6, P7, 7, P8, 8, P9, 9, P10, 10, P11, 11, P12,
-    12, P13, 13, P14, 14, P15, 15, P16, 16, P17, 17, P18, 18, P19, 19, P20, 20, P21, 21, P22, 22,
-    P23, 23, P24, 24, P25, 25, P26, 26, P27, 27, P28, 28, P29, 29, P30, 30
+    Or31, T0, 0, T1, 1, T2, 2, T3, 3, T4, 4, T5, 5, T6, 6, T7, 7, T8, 8, T9, 9, T10, 10, T11, 11,
+    T12, 12, T13, 13, T14, 14, T15, 15, T16, 16, T17, 17, T18, 18, T19, 19, T20, 20, T21, 21, T22,
+    22, T23, 23, T24, 24, T25, 25, T26, 26, T27, 27, T28, 28, T29, 29, T30, 30
 );
 at!(
-    P0, 0, P1, 1, P2, 2, P3, 3, P4, 4, P5, 5, P6, 6, P7, 7, P8, 8, P9, 9, P10, 10, P11, 11, P12,
-    12, P13, 13, P14, 14, P15, 15, P16, 16, P17, 17, P18, 18, P19, 19, P20, 20, P21, 21, P22, 22,
-    P23, 23, P24, 24, P25, 25, P26, 26, P27, 27, P28, 28, P29, 29, P30, 30, P31, 31
+    Or32, T0, 0, T1, 1, T2, 2, T3, 3, T4, 4, T5, 5, T6, 6, T7, 7, T8, 8, T9, 9, T10, 10, T11, 11,
+    T12, 12, T13, 13, T14, 14, T15, 15, T16, 16, T17, 17, T18, 18, T19, 19, T20, 20, T21, 21, T22,
+    22, T23, 23, T24, 24, T25, 25, T26, 26, T27, 27, T28, 28, T29, 29, T30, 30, T31, 31
 );

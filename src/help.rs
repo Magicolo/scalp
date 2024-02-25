@@ -101,10 +101,16 @@ impl<'a, S: Style + ?Sized + 'a> Helper<'a, S> {
         prefix: impl Format,
         suffix: impl Format,
     ) -> Result<usize, fmt::Error> {
-        self.join(metas, prefix, suffix, ", ", |meta| match meta {
-            Meta::Type(value) => Some(Cow::Borrowed(value)),
-            _ => None,
-        })
+        let mut name = None;
+        for meta in visible(metas) {
+            if let Meta::Type(value) = meta {
+                name = Some(value);
+            }
+        }
+        match name {
+            Some(name) => Ok(self.write(prefix)? + self.write(name)? + self.write(suffix)?),
+            None => Ok(0),
+        }
     }
 
     fn versions(
@@ -249,30 +255,24 @@ impl<'a, S: Style + ?Sized + 'a> Helper<'a, S> {
         Ok(width)
     }
 
-    fn columns(
-        &self,
-        metas: &[Meta],
-        depth: usize,
-        (short, long, types): &mut (bool, bool, bool),
-    ) -> Columns {
+    fn columns(&self, metas: &[Meta], depth: usize) -> Columns {
+        let (mut short, mut long) = (false, false);
         let mut columns = Columns::default();
         for meta in visible(metas) {
             match meta {
                 Meta::Position if depth == 0 => {
-                    columns.short += 3 + if replace(short, true) { 2 } else { 0 }
+                    columns.short += 3 + if replace(&mut short, true) { 2 } else { 0 }
                 }
                 Meta::Name(Name::Short, value) if depth == 0 => {
-                    columns.short += value.len() + if replace(short, true) { 2 } else { 0 }
+                    columns.short += value.len() + if replace(&mut short, true) { 2 } else { 0 }
                 }
                 Meta::Name(Name::Long, value) if depth == 0 => {
-                    columns.long += value.len() + if replace(long, true) { 2 } else { 0 }
+                    columns.long += value.len() + if replace(&mut long, true) { 2 } else { 0 }
                 }
                 Meta::Type(value) if depth == 0 => {
-                    if columns.types == 0 {
-                        columns.types += self.style.begin(Item::Type).width();
-                        columns.types += self.style.end(Item::Type).width();
-                    }
-                    columns.types += value.len() + if replace(types, true) { 2 } else { 0 }
+                    columns.types = value.len();
+                    columns.types += self.style.begin(Item::Type).width();
+                    columns.types += self.style.end(Item::Type).width();
                 }
                 Meta::Root(metas)
                 | Meta::Option(metas)
@@ -280,7 +280,7 @@ impl<'a, S: Style + ?Sized + 'a> Helper<'a, S> {
                 | Meta::Group(metas)
                     if depth > 0 =>
                 {
-                    let child = self.columns(metas, depth - 1, &mut (false, false, false));
+                    let child = self.columns(metas, depth - 1);
                     columns.short = columns.short.max(child.short);
                     columns.long = columns.long.max(child.long);
                     columns.types = columns.types.max(child.types);
@@ -314,7 +314,7 @@ impl<'a, S: Style + ?Sized + 'a> Helper<'a, S> {
 
     fn node(&mut self, metas: &[Meta], depth: usize) -> fmt::Result {
         let mut option = 0;
-        let columns = self.columns(metas, 1, &mut (false, false, false));
+        let columns = self.columns(metas, 1);
         let mut helper = self.own();
         for meta in visible(metas) {
             match meta {

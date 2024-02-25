@@ -29,6 +29,7 @@ pub enum Error {
     GroupNestingLimitOverflow,
     InvalidIndex(usize),
     MissingIndex,
+    InvalidParseState,
     InvalidOptionName(Cow<'static, str>),
     InvalidVerbName(Cow<'static, str>),
     MissingOptionNameOrPosition,
@@ -149,6 +150,7 @@ impl fmt::Display for Error {
                 }
                 write!(f, ".")?;
             }
+            Error::InvalidParseState => write!(f, "Invalid parse state.")?,
             Error::DuplicateNode => write!(f, "Duplicate node.")?,
             Error::GroupNestingLimitOverflow => write!(f, "Group nesting limit overflow.")?,
             Error::MissingOptionNameOrPosition => write!(f, "Missing name or position for option.")?,

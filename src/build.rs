@@ -818,15 +818,25 @@ impl<P> Builder<scope::Verb, P> {
 impl Builder<scope::Option, Value<Unit>> {
     pub fn parse<T: FromStr + 'static>(self) -> Builder<scope::Option, Value<T>> {
         let case = self.case;
-        self.meta(Meta::Type(type_name::<T>(case)))
-            .map_parse(|_| Value {
-                tag: if TypeId::of::<T>() == TypeId::of::<bool>() {
-                    Some(Cow::Borrowed("true"))
-                } else {
-                    None
-                },
-                _marker: PhantomData,
-            })
+        self.parse_with(
+            TypeId::of::<T>() == TypeId::of::<bool>(),
+            type_name::<T>(case),
+        )
+    }
+
+    pub fn parse_with<T: FromStr>(
+        self,
+        tag: bool,
+        format: impl Into<Cow<'static, str>>,
+    ) -> Builder<scope::Option, Value<T>> {
+        self.meta(Meta::Type(format.into())).map_parse(|_| Value {
+            tag: if tag {
+                Some(Cow::Borrowed("true"))
+            } else {
+                None
+            },
+            _marker: PhantomData,
+        })
     }
 }
 
