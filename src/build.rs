@@ -13,7 +13,7 @@ use crate::{
     style, AUTHOR, BREAK, HELP, LICENSE, MAXIMUM, SHIFT, VERSION,
 };
 use core::{any::TypeId, default, fmt, marker::PhantomData, num::NonZeroUsize, str::FromStr};
-use std::{any, borrow::Cow, collections::hash_map::Entry, convert::Infallible};
+use std::{any, borrow::Cow, collections::hash_map::Entry, convert::Infallible, mem::replace};
 
 pub struct Builder<S, P = At<()>> {
     case: Case,
@@ -24,6 +24,7 @@ pub struct Builder<S, P = At<()>> {
     parse: Result<P, Error>,
     scope: S,
     style: Box<dyn style::Style>,
+    position: usize,
 }
 
 pub struct Unit;
@@ -50,6 +51,122 @@ impl default::Default for Builder<scope::Root> {
 impl<S, P> Builder<S, P> {
     pub fn pipe<Q>(self, pipe: impl FnOnce(Self) -> Builder<S, Q>) -> Builder<S, Q> {
         pipe(self)
+    }
+
+    pub fn map<T, F: Fn(P::Value) -> T>(self, map: F) -> Builder<S, impl Parse<Value = T>>
+    where
+        P: Parse,
+    {
+        self.try_map(move |value| Ok(map(value)))
+    }
+
+    pub fn try_map<T, F: Fn(P::Value) -> Result<T, Error>>(self, map: F) -> Builder<S, Map<P, F>>
+    where
+        P: Parse,
+    {
+        self.map_parse(|parse| Map(parse, map))
+    }
+
+    pub fn filter(
+        self,
+        filter: impl Fn(&P::Value) -> bool,
+    ) -> Builder<S, impl Parse<Value = Option<P::Value>>>
+    where
+        P: Parse,
+    {
+        self.map(move |value| if filter(&value) { Some(value) } else { None })
+    }
+
+    pub fn any<T>(self) -> Builder<S, impl Parse<Value = Option<T>>>
+    where
+        P: Parse,
+        P::Value: Any<T>,
+    {
+        self.map(Any::any)
+    }
+
+    pub fn or<T>(self, error: impl Into<Error>) -> Builder<S, impl Parse<Value = T>>
+    where
+        P: Parse<Value = Option<T>>,
+    {
+        let error = error.into();
+        self.try_map(move |value| value.ok_or(error.clone()))
+    }
+
+    pub fn boxed(self) -> Builder<S, Box<dyn Parse<Value = P::Value, State = P::State>>>
+    where
+        P: Parse + 'static,
+    {
+        self.map_parse(|parse| Box::new(parse) as _)
+    }
+
+    fn map_parse<Q>(self, map: impl FnOnce(P) -> Q) -> Builder<S, Q> {
+        self.map_both(|scope| scope, map)
+    }
+
+    fn try_map_parse<Q>(self, map: impl FnOnce(P) -> Result<Q, Error>) -> Builder<S, Q> {
+        self.try_map_both(|scope| scope, map)
+    }
+
+    fn map_both<T, Q>(
+        self,
+        scope: impl FnOnce(S) -> T,
+        parse: impl FnOnce(P) -> Q,
+    ) -> Builder<T, Q> {
+        self.try_map_both(scope, |old| Ok(parse(old)))
+    }
+
+    fn try_map_both<T, Q>(
+        self,
+        scope: impl FnOnce(S) -> T,
+        parse: impl FnOnce(P) -> Result<Q, Error>,
+    ) -> Builder<T, Q> {
+        Builder {
+            case: self.case,
+            tag: self.tag,
+            short: self.short,
+            long: self.long,
+            buffer: self.buffer,
+            style: self.style,
+            scope: scope(self.scope),
+            parse: self.parse.and_then(parse),
+            position: self.position,
+        }
+    }
+
+    fn swap_scope<T>(self, scope: T) -> (S, Builder<T, P>) {
+        (
+            self.scope,
+            Builder {
+                case: self.case,
+                tag: self.tag,
+                short: self.short,
+                long: self.long,
+                buffer: self.buffer,
+                style: self.style,
+                scope,
+                parse: self.parse,
+                position: self.position,
+            },
+        )
+    }
+
+    fn swap_both<T, Q>(self, scope: T, parse: Q) -> (S, Result<P, Error>, Builder<T, Q>) {
+        (
+            self.scope,
+            self.parse,
+            Builder {
+                case: self.case,
+                tag: self.tag,
+                short: self.short,
+                long: self.long,
+                buffer: self.buffer,
+                style: self.style,
+                scope,
+                parse: Ok(parse),
+                position: self.position,
+            },
+        )
     }
 
     fn descend(&mut self, meta: &mut Meta) -> Result<Indices, Error> {
@@ -185,7 +302,7 @@ impl<S, P> Builder<S, P> {
                     }
                 }
                 Some(Meta::Swizzle) => swizzle = true,
-                Some(Meta::Position) => {
+                Some(Meta::Position(_)) => {
                     indices.positions.push(index);
                     has = true;
                 }
@@ -372,157 +489,6 @@ impl<S, P> Builder<S, P> {
     }
 }
 
-impl<S, P> Builder<S, P> {
-    pub fn map<T, F: Fn(P::Value) -> T>(
-        self,
-        map: F,
-    ) -> Builder<S, Map<P, impl Fn(P::Value) -> Result<T, Error>>>
-    where
-        P: Parse,
-    {
-        self.try_map(move |value| Ok(map(value)))
-    }
-
-    pub fn try_map<T, F: Fn(P::Value) -> Result<T, Error>>(self, map: F) -> Builder<S, Map<P, F>>
-    where
-        P: Parse,
-    {
-        self.map_parse(|parse| Map(parse, map))
-    }
-
-    pub fn filter(
-        self,
-        filter: impl Fn(&P::Value) -> bool,
-    ) -> Builder<S, Map<P, impl Fn(P::Value) -> Result<Option<P::Value>, Error>>>
-    where
-        P: Parse,
-    {
-        self.map(move |value| if filter(&value) { Some(value) } else { None })
-    }
-
-    pub fn filter_or(
-        self,
-        error: impl Into<Error>,
-        filter: impl Fn(&P::Value) -> bool,
-    ) -> Builder<S, Map<P, impl Fn(P::Value) -> Result<P::Value, Error>>>
-    where
-        P: Parse,
-    {
-        let error = error.into();
-        self.try_map(move |value| {
-            if filter(&value) {
-                Ok(value)
-            } else {
-                Err(error.clone())
-            }
-        })
-    }
-
-    pub fn or<T>(
-        self,
-        error: impl Into<Error>,
-    ) -> Builder<S, Map<P, impl Fn(P::Value) -> Result<T, Error>>>
-    where
-        P: Parse<Value = Option<T>>,
-    {
-        let error = error.into();
-        self.try_map(move |value| value.ok_or(error.clone()))
-    }
-
-    pub fn boxed(self) -> Builder<S, Box<dyn Parse<Value = P::Value, State = P::State>>>
-    where
-        P: Parse + 'static,
-    {
-        self.map_parse(|parse| Box::new(parse) as _)
-    }
-
-    pub fn any<T>(self) -> Builder<S, Map<P, impl Fn(P::Value) -> Result<Option<T>, Error>>>
-    where
-        P: Parse,
-        P::Value: Any<T>,
-    {
-        self.map(Any::any)
-    }
-
-    pub fn any_or<T>(
-        self,
-        error: impl Into<Error>,
-    ) -> Builder<S, Map<P, impl Fn(P::Value) -> Result<T, Error>>>
-    where
-        P: Parse,
-        P::Value: Any<T>,
-    {
-        let error = error.into();
-        self.try_map(move |value| value.any().ok_or(error.clone()))
-    }
-
-    fn map_parse<Q>(self, map: impl FnOnce(P) -> Q) -> Builder<S, Q> {
-        self.map_both(|scope| scope, map)
-    }
-
-    fn try_map_parse<Q>(self, map: impl FnOnce(P) -> Result<Q, Error>) -> Builder<S, Q> {
-        self.try_map_both(|scope| scope, map)
-    }
-
-    fn map_both<T, Q>(
-        self,
-        scope: impl FnOnce(S) -> T,
-        parse: impl FnOnce(P) -> Q,
-    ) -> Builder<T, Q> {
-        self.try_map_both(scope, |old| Ok(parse(old)))
-    }
-
-    fn try_map_both<T, Q>(
-        self,
-        scope: impl FnOnce(S) -> T,
-        parse: impl FnOnce(P) -> Result<Q, Error>,
-    ) -> Builder<T, Q> {
-        Builder {
-            case: self.case,
-            tag: self.tag,
-            short: self.short,
-            long: self.long,
-            buffer: self.buffer,
-            style: self.style,
-            scope: scope(self.scope),
-            parse: self.parse.and_then(parse),
-        }
-    }
-
-    fn swap_scope<T>(self, scope: T) -> (S, Builder<T, P>) {
-        (
-            self.scope,
-            Builder {
-                case: self.case,
-                tag: self.tag,
-                short: self.short,
-                long: self.long,
-                buffer: self.buffer,
-                style: self.style,
-                scope,
-                parse: self.parse,
-            },
-        )
-    }
-
-    fn swap_both<T, Q>(self, scope: T, parse: Q) -> (S, Result<P, Error>, Builder<T, Q>) {
-        (
-            self.scope,
-            self.parse,
-            Builder {
-                case: self.case,
-                tag: self.tag,
-                short: self.short,
-                long: self.long,
-                buffer: self.buffer,
-                style: self.style,
-                scope,
-                parse: Ok(parse),
-            },
-        )
-    }
-}
-
 impl<S: Scope, P> Builder<S, P> {
     pub fn help(self, help: impl Into<Cow<'static, str>>) -> Self {
         let help = help.into();
@@ -552,6 +518,16 @@ impl<S: Scope, P> Builder<S, P> {
 
     pub fn show(self) -> Self {
         self.meta(Meta::Show)
+    }
+
+    pub fn require<T: 'static>(self) -> Builder<S, Require<P>>
+    where
+        P: Parse<Value = Option<T>>,
+    {
+        let case = self.case;
+        let name = type_name::<T>(case);
+        self.meta(Meta::Require)
+            .map_parse(|parse| Require(parse, name))
     }
 
     fn try_meta(mut self, meta: Result<Meta, Error>) -> Self {
@@ -589,9 +565,9 @@ impl<S: scope::Node, P> Builder<S, P> {
     where
         P: Stack,
     {
-        let (scope, old, group) = self.swap_both(scope::Group::new(), At(()));
-        let (scope, mut builder) = build(group).swap_scope(scope);
-        builder.scope.push(scope.into());
+        let (scope, old, builder) = self.swap_both(scope::Group::new(), At(()));
+        let (scope, mut builder) = build(builder).swap_scope(scope);
+        builder.scope.push(Meta::from(scope));
         builder.try_map_parse(|new| Ok(old?.push(new)))
     }
 
@@ -602,10 +578,12 @@ impl<S: scope::Node, P> Builder<S, P> {
     where
         P: Stack,
     {
-        let (scope, old, builder) = self.swap_both(scope::Verb::new(), At(()));
+        let (scope, old, mut builder) = self.swap_both(scope::Verb::new(), At(()));
+        let position = replace(&mut builder.position, 0);
         let (verb, mut builder) = build(builder).swap_scope(scope);
         let mut meta = Meta::from(verb);
         let indices = builder.descend(&mut meta);
+        builder.position = position;
         builder.scope.push(meta.clone(1));
         builder.try_map_parse(|new| {
             Ok(old?.push(Node {
@@ -645,7 +623,7 @@ impl<S: scope::Node, P> Builder<S, P> {
         builder.try_map_parse(|new| {
             Ok(old?.push(With {
                 parse: new,
-                set: set?,
+                set: Some(set?),
                 meta,
             }))
         })
@@ -692,6 +670,7 @@ impl Builder<scope::Root> {
             parse: Ok(At(())),
             scope: scope::Root::new(),
             style: Box::new(style::Termion),
+            position: 0,
         }
     }
 
@@ -849,8 +828,10 @@ impl<P> Builder<scope::Option, P> {
         self.try_meta(meta)
     }
 
-    pub fn position(self) -> Self {
-        self.meta(Meta::Position)
+    pub fn position(mut self) -> Self {
+        let position = self.position;
+        self.position += 1;
+        self.meta(Meta::Position(position))
     }
 
     pub fn swizzle(self) -> Self
@@ -912,10 +893,6 @@ impl<P> Builder<scope::Option, P> {
         let variable = variable.into();
         self.meta(Meta::Environment(variable.clone()))
             .map_parse(|inner| Environment(inner, variable, parse))
-    }
-
-    pub fn require(self) -> Builder<scope::Option, Require<P>> {
-        self.meta(Meta::Require).map_parse(Require)
     }
 
     pub fn many<T, I: default::Default + Extend<T>>(

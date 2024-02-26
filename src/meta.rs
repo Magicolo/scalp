@@ -1,5 +1,5 @@
 use core::num::NonZeroUsize;
-use std::borrow::Cow;
+use std::{borrow::Cow, iter::from_fn};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Name {
@@ -8,10 +8,10 @@ pub enum Name {
     Long,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Meta {
     Name(Name, Cow<'static, str>),
-    Position,
+    Position(usize),
     Version(Cow<'static, str>),
     License(Cow<'static, str>, Cow<'static, str>),
     Author(Cow<'static, str>),
@@ -86,7 +86,7 @@ impl Meta {
     pub fn clone(&self, depth: usize) -> Self {
         match self {
             Meta::Name(name, value) => Meta::Name(*name, value.clone()),
-            Meta::Position => Meta::Position,
+            Meta::Position(value) => Meta::Position(*value),
             Meta::Version(value) => Meta::Version(value.clone()),
             Meta::License(name, content) => Meta::License(name.clone(), content.clone()),
             Meta::Author(value) => Meta::Author(value.clone()),
@@ -126,15 +126,29 @@ impl Meta {
         }
     }
 
-    pub(crate) fn type_name(&self, depth: usize) -> Option<&Cow<'static, str>> {
+    pub(crate) fn children(&self) -> &[Meta] {
         match self {
-            Meta::Type(name) if depth == 0 => Some(name),
-            Meta::Root(metas) | Meta::Option(metas) | Meta::Verb(metas) | Meta::Group(metas)
-                if depth > 0 =>
-            {
-                metas.iter().find_map(|meta| meta.type_name(depth - 1))
+            Meta::Root(metas) | Meta::Option(metas) | Meta::Verb(metas) | Meta::Group(metas) => {
+                metas
             }
-            _ => None,
+            _ => &[],
         }
+    }
+
+    pub(crate) fn visible<'a>(
+        metas: impl IntoIterator<Item = &'a Meta>,
+    ) -> impl Iterator<Item = &'a Meta> {
+        let mut metas = metas.into_iter();
+        from_fn(move || loop {
+            let meta = metas.next()?;
+            match meta {
+                Meta::Hide => loop {
+                    if let Meta::Show = metas.next()? {
+                        break;
+                    }
+                },
+                meta => return Some(meta),
+            }
+        })
     }
 }

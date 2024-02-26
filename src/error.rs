@@ -1,6 +1,6 @@
 use crate::parse::Key;
 use core::fmt;
-use std::{borrow::Cow, collections::VecDeque, error};
+use std::{borrow::Cow, collections::VecDeque, error, mem::replace};
 
 #[derive(Clone, PartialEq)]
 pub enum Error {
@@ -10,7 +10,7 @@ pub enum Error {
     License(Option<String>),
 
     MissingOptionValue(Option<Cow<'static, str>>, Option<Key>),
-    MissingRequiredValue(Option<Key>),
+    MissingRequiredValue(Vec<Key>, Option<Key>, Cow<'static, str>),
     DuplicateOption(Option<Key>),
     UnrecognizedArgument(Cow<'static, str>, Vec<(Cow<'static, str>, usize)>),
     ExcessArguments(VecDeque<Cow<'static, str>>),
@@ -106,10 +106,19 @@ impl fmt::Display for Error {
                 }
                 write!(f, ".")?;
             }
-            Error::MissingRequiredValue(key) => {
-                write!(f, "Missing required option")?;
-                if let Some(key) = key {
-                    write!(f, " '{key}'")?;
+            Error::MissingRequiredValue(path, key, type_name) => {
+                write!(f, "Missing required value of type '{type_name}'")?;
+                let mut has = false;
+                for key in path.iter().chain(key) {
+                    if replace(&mut has, true) {
+                        write!(f, " ")?;
+                    } else {
+                        write!(f, " for '")?;
+                    }
+                    write!(f, "{key}")?;
+                }
+                if has {
+                    write!(f, "'")?;
                 }
                 write!(f, ".")?;
             }

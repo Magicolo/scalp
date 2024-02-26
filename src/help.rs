@@ -2,6 +2,7 @@ use orn::Or2;
 
 use crate::{
     meta::{Meta, Name},
+    parse::Key,
     style::{Format, Item, Line, Style},
 };
 use core::{
@@ -9,10 +10,11 @@ use core::{
     mem::{replace, take},
     slice::from_ref,
 };
-use std::{borrow::Cow, fs, iter::from_fn, ops::Deref};
+use std::{borrow::Cow, fs, ops::Deref};
 
 struct Helper<'a, S: Style + ?Sized> {
     buffer: &'a mut String,
+    path: &'a [Key],
     style: &'a S,
     indent: usize,
 }
@@ -44,6 +46,7 @@ impl<'a, S: Style + ?Sized + 'a> Helper<'a, S> {
     fn own(&mut self) -> Helper<S> {
         Helper {
             buffer: self.buffer,
+            path: self.path,
             style: self.style,
             indent: self.indent,
         }
@@ -80,17 +83,12 @@ impl<'a, S: Style + ?Sized + 'a> Helper<'a, S> {
         long: bool,
         prefix: impl Format,
         suffix: impl Format,
-        position: &mut usize,
     ) -> Result<usize, fmt::Error> {
         self.join(metas, prefix, suffix, ", ", |meta| match meta {
             Meta::Name(Name::Plain, value) => Some(Cow::Borrowed(value)),
             Meta::Name(Name::Short, value) if short => Some(Cow::Borrowed(value)),
             Meta::Name(Name::Long, value) if long => Some(Cow::Borrowed(value)),
-            Meta::Position if short => {
-                let value = format!("[{position}]");
-                *position += 1;
-                Some(Cow::Owned(value))
-            }
+            Meta::Position(position) if short => Some(Cow::Owned(format!("[{position}]"))),
             _ => None,
         })
     }
@@ -102,7 +100,7 @@ impl<'a, S: Style + ?Sized + 'a> Helper<'a, S> {
         suffix: impl Format,
     ) -> Result<usize, fmt::Error> {
         let mut name = None;
-        for meta in visible(metas) {
+        for meta in Meta::visible(metas) {
             if let Meta::Type(value) = meta {
                 name = Some(value);
             }
@@ -147,7 +145,7 @@ impl<'a, S: Style + ?Sized + 'a> Helper<'a, S> {
     ) -> Result<usize, fmt::Error> {
         let mut width = 0;
         let mut prefix = Some(prefix);
-        for meta in visible(metas) {
+        for meta in Meta::visible(metas) {
             if let Some(value) = find(meta) {
                 match prefix.take() {
                     Some(prefix) => width += self.write(prefix)?,
@@ -216,7 +214,7 @@ impl<'a, S: Style + ?Sized + 'a> Helper<'a, S> {
         line: impl Format,
     ) -> Result<usize, fmt::Error> {
         let mut count = 0;
-        for meta in visible(metas) {
+        for meta in Meta::visible(metas) {
             if let Meta::Summary(value) = meta {
                 if !value.chars().all(char::is_whitespace) {
                     count += self.write_line(())?;
@@ -240,13 +238,13 @@ impl<'a, S: Style + ?Sized + 'a> Helper<'a, S> {
     ) -> Result<usize, fmt::Error> {
         let mut has = false;
         let mut width = 0;
-        for meta in visible(metas) {
+        for meta in Meta::visible(metas) {
             if let Meta::Summary(value) = meta {
                 width += self.wrap(value, &prefix, &suffix, "", &mut cursor, &mut has)?;
             }
         }
         if width == 0 {
-            for meta in visible(metas) {
+            for meta in Meta::visible(metas) {
                 if let Meta::Help(value) = meta {
                     width += self.wrap(value, &prefix, &suffix, "", &mut cursor, &mut has)?;
                 }
@@ -258,9 +256,9 @@ impl<'a, S: Style + ?Sized + 'a> Helper<'a, S> {
     fn columns(&self, metas: &[Meta], depth: usize) -> Columns {
         let (mut short, mut long) = (false, false);
         let mut columns = Columns::default();
-        for meta in visible(metas) {
+        for meta in Meta::visible(metas) {
             match meta {
-                Meta::Position if depth == 0 => {
+                Meta::Position(_) if depth == 0 => {
                     columns.short += 3 + if replace(&mut short, true) { 2 } else { 0 }
                 }
                 Meta::Name(Name::Short, value) if depth == 0 => {
@@ -313,10 +311,9 @@ impl<'a, S: Style + ?Sized + 'a> Helper<'a, S> {
     }
 
     fn node(&mut self, metas: &[Meta], depth: usize) -> fmt::Result {
-        let mut option = 0;
         let columns = self.columns(metas, 1);
         let mut helper = self.own();
-        for meta in visible(metas) {
+        for meta in Meta::visible(metas) {
             match meta {
                 Meta::Help(value) => {
                     helper.indentation()?;
@@ -357,10 +354,9 @@ impl<'a, S: Style + ?Sized + 'a> Helper<'a, S> {
                         true,
                         helper.style.begin(Item::Group),
                         helper.style.end(Item::Group),
-                        &mut 0,
                     )?;
-                    helper.write_line("")?;
                     if width > 0 {
+                        helper.write_line("")?;
                         helper.indent().node(metas, depth + 1)?;
                         helper.write_line("")?;
                     } else {
@@ -373,7 +369,7 @@ impl<'a, S: Style + ?Sized + 'a> Helper<'a, S> {
                 }
                 Meta::Verb(metas) => {
                     helper.indentation()?;
-                    let mut helper = helper.write_columns(metas, &columns, true, &mut 0)?;
+                    let mut helper = helper.write_columns(metas, &columns, true)?;
                     helper.summary(
                         metas,
                         helper.style.begin(Item::Summary),
@@ -384,7 +380,7 @@ impl<'a, S: Style + ?Sized + 'a> Helper<'a, S> {
                 }
                 Meta::Option(metas) => {
                     helper.indentation()?;
-                    let mut helper = helper.write_columns(metas, &columns, false, &mut option)?;
+                    let mut helper = helper.write_columns(metas, &columns, false)?;
                     let mut width = helper.indent;
                     width += helper.summary(
                         metas,
@@ -396,7 +392,7 @@ impl<'a, S: Style + ?Sized + 'a> Helper<'a, S> {
                     if width + buffer.len() > helper.style.width() {
                         helper.write_line("")?;
                         width = helper.indentation()?;
-                    } else if width > 0 {
+                    } else if width > helper.indent {
                         width += helper.write(" ")?;
                     }
                     helper.wrap(
@@ -431,7 +427,6 @@ impl<'a, S: Style + ?Sized + 'a> Helper<'a, S> {
                 self.style.begin(Item::Head),
             ),
             self.style.end(Item::Head),
-            &mut 0,
         )?;
         if count > 0 {
             width += count;
@@ -539,12 +534,11 @@ impl<'a, S: Style + ?Sized + 'a> Helper<'a, S> {
         })?;
 
         if has {
-            self.write_line((
-                self.style.begin(Item::Bar(Line::Head)),
-                self.style.end(Item::Bar(Line::Head)),
-                buffer,
-            ))?;
+            width += self.write(self.style.begin(Item::Bar(Line::Head)))?;
+            width += self.write(self.style.end(Item::Bar(Line::Head)))?;
+            self.write_line(buffer)?;
         }
+        self.write_line(())?;
 
         Ok(width)
     }
@@ -554,7 +548,6 @@ impl<'a, S: Style + ?Sized + 'a> Helper<'a, S> {
         metas: &[Meta],
         columns: &Columns,
         verb: bool,
-        option: &mut usize,
     ) -> Result<Helper<S>, fmt::Error> {
         let item = if verb { Item::Verb } else { Item::Option };
         let mut width = 0;
@@ -566,7 +559,6 @@ impl<'a, S: Style + ?Sized + 'a> Helper<'a, S> {
                 false,
                 helper.style.begin(item),
                 helper.style.end(item),
-                option,
             )
         })?;
         width += self.write_column(columns.long, pad, |helper| {
@@ -576,7 +568,6 @@ impl<'a, S: Style + ?Sized + 'a> Helper<'a, S> {
                 true,
                 helper.style.begin(item),
                 helper.style.end(item),
-                option,
             )
         })?;
         width += self.write_column(columns.types, pad, |helper| {
@@ -618,10 +609,11 @@ impl<'a, S: Style + ?Sized + 'a> Helper<'a, S> {
     }
 }
 
-pub(crate) fn help<S: Style + ?Sized>(meta: &Meta, style: &S) -> Option<String> {
+pub(crate) fn help<S: Style + ?Sized>(meta: &Meta, path: &[Key], style: &S) -> Option<String> {
     let mut buffer = String::new();
     let mut writer = Helper {
         buffer: &mut buffer,
+        path,
         style,
         indent: 0,
     };
@@ -651,21 +643,6 @@ pub(crate) fn author(meta: &Meta, depth: usize) -> Option<String> {
     join(meta, depth, |meta| match meta {
         Meta::Author(author) => Some(Cow::Borrowed(author)),
         _ => None,
-    })
-}
-
-fn visible(metas: &[Meta]) -> impl Iterator<Item = &Meta> {
-    let mut metas = metas.iter();
-    from_fn(move || loop {
-        let meta = metas.next()?;
-        match meta {
-            Meta::Hide => loop {
-                if let Meta::Show = metas.next()? {
-                    break;
-                }
-            },
-            meta => return Some(meta),
-        }
     })
 }
 

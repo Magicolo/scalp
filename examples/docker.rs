@@ -280,7 +280,7 @@ fn main() -> Result<(), Error> {
             .group(swarm_commands)
             .group(commands)
             .any::<Command>()
-            .try_map(|command| Ok(command.ok_or("Missing command.")?))
+            .require()
         )
         .group(global_options)
         .help("Run 'docker COMMAND --help' for more information on a command.")
@@ -289,7 +289,7 @@ fn main() -> Result<(), Error> {
         .map(|(command, global)| Docker { command, global })
         .build()?;
     let arguments = [
-        "--help", "--config", "boba", "--debug", "false", "-H", "jango", "--host", "karl", "kill",
+        "--config", "boba", "--debug", "false", "-H", "jango", "--host", "karl", "kill",
     ];
     let environment = [("DOCKER_HOST", "fett")];
     let docker = match parser.parse_with(arguments, environment) {

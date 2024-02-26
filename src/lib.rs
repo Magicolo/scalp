@@ -19,6 +19,12 @@ pub use crate::{
 };
 
 /*
+    FEATURES:
+    - A `Termion` style for pretty colored and styled formatting (based on the 'termion' crate). 
+    - A 'Plain' style for minimal formatting.
+    - Ability to implement a custom style.
+    - Nearest suggestions on typos.
+
     TODO:
     - Favor `Deserialize` over `FromStr`.
         - Define a 'MetaDeserializer' which will be used to collect meta data from a type `T: Deserialize` (including variant names and more).
@@ -67,7 +73,7 @@ macro_rules! header {
             builder = builder.summary(env!("CARGO_PKG_DESCRIPTION").trim());
             builder = builder.home(env!("CARGO_PKG_HOMEPAGE").trim());
             builder = builder.repository(env!("CARGO_PKG_REPOSITORY").trim());
-            builder.line()
+            builder
         })
     };
 }
