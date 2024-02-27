@@ -169,14 +169,19 @@ impl<S, P> Builder<S, P> {
         )
     }
 
-    fn descend(&mut self, meta: &mut Meta) -> Result<Indices, Error> {
+    fn descend(&mut self, meta: &mut Meta) -> Result<(Indices, RegexSet), Error> {
         let mut indices = Indices::default();
+        let mut patterns = Vec::new();
         let (version, help, metas) = match meta {
-            Meta::Root(metas) | Meta::Option(metas) | Meta::Verb(metas) | Meta::Group(metas) => {
-                let tuple = self.descend_node(metas, 0, 0, &mut indices)?;
+            Meta::Root(metas) | Meta::Verb(metas) | Meta::Group(metas) => {
+                let tuple = self.descend_node(metas, 0, 0, &mut indices, &mut patterns)?;
                 (tuple.0, tuple.1, metas)
             }
-            _ => return Ok(indices),
+            Meta::Option(metas) => {
+                self.descend_node(metas, 0, 0, &mut indices, &mut patterns)?;
+                (None, None, metas)
+            }
+            _ => return Ok((indices, RegexSet::new(patterns)?)),
         };
         if let Some(true) = version {
             metas.extend(self.insert_version(&mut indices, true, true)?);
@@ -187,7 +192,7 @@ impl<S, P> Builder<S, P> {
         if version.is_some() || help.is_some() {
             Self::insert_key(self.long.clone(), &mut indices, BREAK)?;
         }
-        Ok(indices)
+        Ok((indices, RegexSet::new(patterns)?))
     }
 
     fn descend_node(
@@ -196,6 +201,7 @@ impl<S, P> Builder<S, P> {
         mask: usize,
         shift: u32,
         indices: &mut Indices,
+        patterns: &mut Vec<String>,
     ) -> Result<(Option<bool>, Option<bool>), Error> {
         let mut index = 0;
         let mut version = None;
@@ -208,10 +214,11 @@ impl<S, P> Builder<S, P> {
             };
             match meta {
                 Meta::Version(_) if hide == 0 => version = version.or(Some(true)),
+                Meta::Valid(value) => patterns.push(format!("^{value}$")),
                 Meta::Help(_) | Meta::Usage(_) | Meta::Note(_) if hide == 0 => {
                     help = help.or(Some(true))
                 }
-                Meta::Hide => hide = usize::saturating_add(hide, 1),
+                Meta::Hide => hide += 1,
                 Meta::Show => hide = usize::saturating_sub(hide, 1),
                 Meta::Option(metas) => {
                     self.descend_option(metas, indices, value)?;
@@ -229,7 +236,8 @@ impl<S, P> Builder<S, P> {
                 }
                 Meta::Group(_) if shift > MAXIMUM => return Err(Error::GroupNestingLimitOverflow),
                 Meta::Group(metas) => {
-                    let tuple = self.descend_node(metas, value, shift + SHIFT, indices)?;
+                    let tuple =
+                        self.descend_node(metas, value, shift + SHIFT, indices, patterns)?;
                     version = merge(version, tuple.0, |left, right| left && right);
                     help = merge(help, tuple.1, |left, right| left && right);
                     index += 1;
@@ -487,9 +495,112 @@ impl<S, P> Builder<S, P> {
         inner.push_str(&self.buffer);
         Ok((name, outer))
     }
+
+    fn convert<'a>(&mut self, format: impl Into<Cow<'a, str>>) -> Cow<'a, str> {
+        let mut format = format.into();
+        self.buffer.clear();
+        self.buffer.push_str(&format);
+        let inner = format.to_mut();
+        inner.clear();
+        inner.extend(self.case.convert(&self.buffer));
+        format
+    }
 }
 
 impl<S: Scope, P> Builder<S, P> {
+    pub fn default<T: Clone + fmt::Debug>(
+        self,
+        default: impl Into<T>,
+    ) -> Builder<S, Default<P, impl Fn() -> T>>
+    where
+        P: Parse<Value = Option<T>>,
+    {
+        let default = default.into();
+        let format = format!("{default:?}");
+        self.default_with(move || default.clone(), format)
+    }
+
+    pub fn default_with<T, F: Fn() -> T>(
+        mut self,
+        default: F,
+        format: impl Into<Cow<'static, str>>,
+    ) -> Builder<S, Default<P, F>>
+    where
+        P: Parse<Value = Option<T>>,
+    {
+        let format = self.convert(format);
+        self.meta(Meta::Default(format))
+            .map_parse(|parse| Default(parse, default))
+    }
+
+    pub fn environment<T: FromStr>(
+        self,
+        variable: impl Into<Cow<'static, str>>,
+    ) -> Builder<S, Environment<P, impl Fn(&str) -> Option<T>>>
+    where
+        P: Parse<Value = Option<T>>,
+    {
+        self.environment_with(variable, |value| value.parse().ok())
+    }
+
+    pub fn environment_with<T, F: Fn(&str) -> Option<T>>(
+        self,
+        variable: impl Into<Cow<'static, str>>,
+        parse: F,
+    ) -> Builder<S, Environment<P, F>>
+    where
+        P: Parse<Value = Option<T>>,
+    {
+        let variable = variable.into();
+        self.meta(Meta::Environment(variable.clone()))
+            .map_parse(|inner| Environment(inner, variable, parse))
+    }
+
+    pub fn many<T, I: default::Default + Extend<T>>(
+        self,
+    ) -> Builder<S, Many<P, I, impl Fn() -> I, impl Fn(&mut I, T)>>
+    where
+        P: Parse<Value = Option<T>>,
+    {
+        self.many_with(Some(NonZeroUsize::MIN), I::default, |items, item| {
+            items.extend([item])
+        })
+    }
+
+    pub fn many_with<T, I, N: Fn() -> I, F: Fn(&mut I, T)>(
+        self,
+        per: Option<NonZeroUsize>,
+        new: N,
+        add: F,
+    ) -> Builder<S, Many<P, I, N, F>>
+    where
+        P: Parse<Value = Option<T>>,
+    {
+        self.meta(Meta::Many(per)).map_parse(|parse| Many {
+            parse,
+            per,
+            new,
+            add,
+            _marker: PhantomData,
+        })
+    }
+
+    pub fn require<T: 'static>(self) -> Builder<S, Require<P>>
+    where
+        P: Parse<Value = Option<T>>,
+    {
+        self.require_with(type_name::<T>())
+    }
+
+    pub fn require_with<T>(mut self, format: impl Into<Cow<'static, str>>) -> Builder<S, Require<P>>
+    where
+        P: Parse<Value = Option<T>>,
+    {
+        let format = self.convert(format);
+        self.meta(Meta::Require)
+            .map_parse(|parse| Require(parse, format))
+    }
+
     pub fn help(self, help: impl Into<Cow<'static, str>>) -> Self {
         let help = help.into();
         if help.chars().all(char::is_whitespace) {
@@ -518,16 +629,6 @@ impl<S: Scope, P> Builder<S, P> {
 
     pub fn show(self) -> Self {
         self.meta(Meta::Show)
-    }
-
-    pub fn require<T: 'static>(self) -> Builder<S, Require<P>>
-    where
-        P: Parse<Value = Option<T>>,
-    {
-        let case = self.case;
-        let name = type_name::<T>(case);
-        self.meta(Meta::Require)
-            .map_parse(|parse| Require(parse, name))
     }
 
     fn try_meta(mut self, meta: Result<Meta, Error>) -> Self {
@@ -574,7 +675,7 @@ impl<S: scope::Node, P> Builder<S, P> {
     pub fn verb<Q>(
         self,
         build: impl FnOnce(Builder<scope::Verb, At>) -> Builder<scope::Verb, Q>,
-    ) -> Builder<S, P::Push<Node<Q>>>
+    ) -> Builder<S, P::Push<With<Node<Q>>>>
     where
         P: Stack,
     {
@@ -582,14 +683,18 @@ impl<S: scope::Node, P> Builder<S, P> {
         let position = replace(&mut builder.position, 0);
         let (verb, mut builder) = build(builder).swap_scope(scope);
         let mut meta = Meta::from(verb);
-        let indices = builder.descend(&mut meta);
+        let pair = builder.descend(&mut meta);
         builder.position = position;
         builder.scope.push(meta.clone(1));
         builder.try_map_parse(|new| {
-            Ok(old?.push(Node {
-                parse: new,
-                indices: indices?,
+            let (indices, set) = pair?;
+            Ok(old?.push(With {
+                parse: Node {
+                    parse: new,
+                    indices,
+                },
                 meta,
+                set,
             }))
         })
     }
@@ -602,7 +707,7 @@ impl<S: scope::Node, P> Builder<S, P> {
         P: Stack,
     {
         let tag = self.tag.clone();
-        let (scope, old, option) = self.swap_both(
+        let (scope, old, builder) = self.swap_both(
             scope::Option::new(),
             Value {
                 tag: if TypeId::of::<T>() == TypeId::of::<bool>() {
@@ -613,17 +718,15 @@ impl<S: scope::Node, P> Builder<S, P> {
                 _marker: PhantomData,
             },
         );
-        let (option, mut builder) = build(option.parse::<T>()).swap_scope(scope);
-        let set = RegexSet::new(option.iter().filter_map(|meta| match meta {
-            Meta::Valid(value) => Some(format!("^{value}$")),
-            _ => None,
-        }));
-        let meta = Meta::from(option);
+        let (option, mut builder) = build(builder.parse::<T>()).swap_scope(scope);
+        let mut meta = Meta::from(option);
+        let pair = builder.descend(&mut meta);
         builder.scope.push(meta.clone(1));
         builder.try_map_parse(|new| {
+            let (_, set) = pair?;
             Ok(old?.push(With {
                 parse: new,
-                set: Some(set?),
+                set,
                 meta,
             }))
         })
@@ -703,18 +806,21 @@ impl Builder<scope::Root> {
 }
 
 impl<P> Builder<scope::Root, P> {
-    pub fn build(self) -> Result<Parser<Node<P>>, Error> {
+    pub fn build(self) -> Result<Parser<With<Node<P>>>, Error> {
         let (root, mut builder) = self.swap_scope(());
         let mut meta = Meta::from(root);
-        let indices = builder.descend(&mut meta)?;
+        let (indices, set) = builder.descend(&mut meta)?;
         Ok(Parser {
             short: builder.short,
             long: builder.long,
             style: builder.style,
-            parse: Node {
+            parse: With {
+                parse: Node {
+                    indices,
+                    parse: builder.parse?,
+                },
                 meta,
-                indices,
-                parse: builder.parse?,
+                set,
             },
         })
     }
@@ -796,23 +902,23 @@ impl<P> Builder<scope::Verb, P> {
 
 impl Builder<scope::Option, Value<Unit>> {
     pub fn parse<T: FromStr + 'static>(self) -> Builder<scope::Option, Value<T>> {
-        let case = self.case;
         self.parse_with(
             if TypeId::of::<T>() == TypeId::of::<bool>() {
                 Some("true")
             } else {
                 None
             },
-            type_name::<T>(case),
+            type_name::<T>(),
         )
     }
 
     pub fn parse_with<T: FromStr>(
-        self,
+        mut self,
         tag: Option<impl Into<Cow<'static, str>>>,
         format: impl Into<Cow<'static, str>>,
     ) -> Builder<scope::Option, Value<T>> {
-        self.meta(Meta::Type(format.into())).map_parse(|_| Value {
+        let format = self.convert(format);
+        self.meta(Meta::Type(format)).map_parse(|_| Value {
             tag: tag.map(Into::into),
             _marker: PhantomData,
         })
@@ -842,109 +948,20 @@ impl<P> Builder<scope::Option, P> {
         self.meta(Meta::Swizzle)
     }
 
-    pub fn default<T: Clone + fmt::Debug>(
-        self,
-        default: impl Into<T>,
-    ) -> Builder<scope::Option, Default<P, impl Fn() -> T>>
-    where
-        P: Parse<Value = Option<T>>,
-    {
-        let default = default.into();
-        let format = format!("{default:?}");
-        self.default_with(move || default.clone(), format)
-    }
-
-    pub fn default_with<T, F: Fn() -> T>(
-        mut self,
-        default: F,
-        format: impl Into<Cow<'static, str>>,
-    ) -> Builder<scope::Option, Default<P, F>>
-    where
-        P: Parse<Value = Option<T>>,
-    {
-        let mut format = format.into();
-        self.buffer.clear();
-        self.buffer.push_str(&format);
-        let inner = format.to_mut();
-        inner.clear();
-        inner.extend(self.case.convert(&self.buffer));
-        self.meta(Meta::Default(format))
-            .map_parse(|parse| Default(parse, default))
-    }
-
-    pub fn environment<T: FromStr>(
-        self,
-        variable: impl Into<Cow<'static, str>>,
-    ) -> Builder<scope::Option, Environment<P, impl Fn(&str) -> Option<T>>>
-    where
-        P: Parse<Value = Option<T>>,
-    {
-        self.environment_with(variable, |value| value.parse().ok())
-    }
-
-    pub fn environment_with<T, F: Fn(&str) -> Option<T>>(
-        self,
-        variable: impl Into<Cow<'static, str>>,
-        parse: F,
-    ) -> Builder<scope::Option, Environment<P, F>>
-    where
-        P: Parse<Value = Option<T>>,
-    {
-        let variable = variable.into();
-        self.meta(Meta::Environment(variable.clone()))
-            .map_parse(|inner| Environment(inner, variable, parse))
-    }
-
-    pub fn many<T, I: default::Default + Extend<T>>(
-        self,
-    ) -> Builder<scope::Option, Many<P, I, impl Fn() -> I, impl Fn(&mut I, T)>>
-    where
-        P: Parse<Value = Option<T>>,
-    {
-        self.many_with(Some(NonZeroUsize::MIN), I::default, |items, item| {
-            items.extend([item])
-        })
-    }
-
-    pub fn many_with<T, I, N: Fn() -> I, F: Fn(&mut I, T)>(
-        self,
-        per: Option<NonZeroUsize>,
-        new: N,
-        add: F,
-    ) -> Builder<scope::Option, Many<P, I, N, F>>
-    where
-        P: Parse<Value = Option<T>>,
-    {
-        self.meta(Meta::Many(per)).map_parse(|parse| Many {
-            parse,
-            per,
-            new,
-            add,
-            _marker: PhantomData,
-        })
-    }
-
     pub fn valid(self, pattern: impl Into<Cow<'static, str>>) -> Self {
         self.meta(Meta::Valid(pattern.into()))
     }
 }
 
-fn type_name<T: 'static>(case: Case) -> Cow<'static, str> {
+fn type_name<T: 'static>() -> &'static str {
     macro_rules! is {
         ($left: expr $(, $rights: ident)+) => {
             $($left == TypeId::of::<$rights>() || $left == TypeId::of::<Option<$rights>>() ||)+ false
         };
     }
 
-    let mut name = any::type_name::<T>();
     let identifier = TypeId::of::<T>();
-    if let Some(split) = name.split('<').next() {
-        name = split;
-    }
-    if let Some(split) = name.split(':').last() {
-        name = split;
-    }
-    let name = if is!(identifier, bool) {
+    if is!(identifier, bool) {
         "boolean"
     } else if is!(identifier, u8, u16, u32, u64, u128, usize) {
         "natural number"
@@ -953,9 +970,15 @@ fn type_name<T: 'static>(case: Case) -> Cow<'static, str> {
     } else if is!(identifier, f32, f64) {
         "rational number"
     } else {
+        let mut name = any::type_name::<T>();
+        if let Some(split) = name.split('<').next() {
+            name = split;
+        }
+        if let Some(split) = name.split(':').last() {
+            name = split;
+        }
         name
-    };
-    case.convert(name).collect()
+    }
 }
 
 fn merge<T>(left: Option<T>, right: Option<T>, merge: impl FnOnce(T, T) -> T) -> Option<T> {

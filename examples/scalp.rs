@@ -13,7 +13,7 @@ pub enum Command {
 }
 
 fn main() -> Result<(), Box<dyn error::Error>> {
-    let command = Parser::builder()
+    let commands = Parser::builder()
         .pipe(header!())
         .usage("Usage: scalp [OPTIONS]")
         .group(|group| {
@@ -37,14 +37,15 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                         .map(|(jango,)| Command::Fett { jango })
                 })
                 .any::<Command>()
-                .require()
+                .many::<_, Vec<_>>()
+                .require_with("command")
         })
         .line()
         .group(|group| group.name("Options:").options(Options::all(true, true)))
-        .map(|(command, _)| command)
+        .map(|(commands, _)| commands)
         .note("A note.")
         .build()?
         .parse()?;
-    println!("{:?}", command);
+    println!("{:?}", commands);
     Ok(())
 }

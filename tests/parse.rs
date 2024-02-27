@@ -38,7 +38,7 @@ fn missing_option_value_with_short() -> Result {
             .unwrap();
         let argument = format!("{short}{name}");
         let error = parser.parse_with([argument.clone()], [("", "")]).unwrap_err();
-        prove!(matches!(error, Error::MissingOptionValue(type_name, option) if type_name == Some("natural number".into()) && option == Some(argument.into())))
+        prove!(matches!(error, Error::MissingOptionValue(type_name, path) if type_name == Some("natural number".into()) && path == vec![argument.into()]))
     })?;
     Ok(())
 }
@@ -54,7 +54,7 @@ fn missing_option_value_with_long() -> Result {
             .unwrap();
         let argument = format!("{long}{name}");
         let error = parser.parse_with([argument.clone()], [("", "")]).unwrap_err();
-        prove!(matches!(error, Error::MissingOptionValue(type_name, option) if type_name == Some("integer number".into()) && option == Some(argument.into())))
+        prove!(matches!(error, Error::MissingOptionValue(type_name, path) if type_name == Some("integer number".into()) && path == vec![argument.into()]))
     })?;
     Ok(())
 }
@@ -71,7 +71,7 @@ fn fails_to_parse_invalid_value() -> Result {
         let error = parser
             .parse_with([arguments.0.clone(), arguments.1.clone()], [("", "")])
             .unwrap_err();
-        prove!(matches!(error, Error::FailedToParseOptionValue(value, type_name, option) if value == arguments.1 && type_name == Some("natural number".into()) && option == Some(arguments.0.into())))
+        prove!(matches!(error, Error::FailedToParseOptionValue(value, type_name, _, name) if value == arguments.1 && type_name == Some("natural number".into()) && name == Some(arguments.0.into())))
     })?;
     Ok(())
 }
@@ -209,7 +209,7 @@ fn parses_enum_value() -> Result {
     );
     assert_eq!(
         parser.parse_with(["-c", "same"], [("", "")]),
-        Err(Error::InvalidOptionValue("same".into(), Some("-c".into())))
+        Err(Error::InvalidOptionValue("same".into(), vec!["-c".into()]))
     );
     Ok(())
 }

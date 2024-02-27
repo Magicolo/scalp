@@ -253,6 +253,18 @@ impl<'a, S: Style + ?Sized + 'a> Helper<'a, S> {
         Ok(width)
     }
 
+    fn usage(
+        &mut self,
+        metas: &[Meta],
+        prefix: impl Format,
+        suffix: impl Format,
+    ) -> Result<usize, fmt::Error> {
+        self.join(metas, prefix, suffix, " ", |meta| match meta {
+            Meta::Usage(value) => Some(Cow::Borrowed(value)),
+            _ => None,
+        })
+    }
+
     fn columns(&self, metas: &[Meta], depth: usize) -> Columns {
         let (mut short, mut long) = (false, false);
         let mut columns = Columns::default();
@@ -503,7 +515,7 @@ impl<'a, S: Style + ?Sized + 'a> Helper<'a, S> {
             width += count;
             has |= count > 0;
 
-            width += helper.join(
+            width += helper.usage(
                 metas,
                 (
                     if has {
@@ -524,11 +536,6 @@ impl<'a, S: Style + ?Sized + 'a> Helper<'a, S> {
                     helper.style.begin(Item::Usage),
                 ),
                 helper.style.end(Item::Usage),
-                " ",
-                |meta| match meta {
-                    Meta::Usage(value) => Some(Cow::Borrowed(value)),
-                    _ => None,
-                },
             )?;
             Ok(())
         })?;

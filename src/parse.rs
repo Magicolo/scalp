@@ -22,7 +22,7 @@ pub struct Context<'a> {
     path: &'a mut Vec<Key>,
     short: &'a str,
     long: &'a str,
-    set: Option<&'a RegexSet>,
+    set: &'a RegexSet,
     meta: Option<&'a Meta>,
     style: &'a dyn style::Style,
     index: Option<usize>,
@@ -44,13 +44,12 @@ pub(crate) struct Indices {
 
 pub struct Node<P> {
     pub(crate) indices: Indices,
-    pub(crate) meta: Meta,
     pub(crate) parse: P,
 }
 
 pub struct With<P> {
     pub(crate) parse: P,
-    pub(crate) set: Option<RegexSet>,
+    pub(crate) set: RegexSet,
     pub(crate) meta: Meta,
 }
 
@@ -159,6 +158,10 @@ impl<'a> Context<'a> {
             return Ok(None);
         };
 
+        if !self.set.is_empty() && !self.set.is_match(&key) {
+            return Err(self.invalid_argument(key));
+        }
+
         self.index = None;
         if key.starts_with(self.short) && !key.starts_with(self.long) {
             let counts = (key.chars().count(), self.short.chars().count());
@@ -177,24 +180,42 @@ impl<'a> Context<'a> {
         Ok(Some(key))
     }
 
-    fn missing_option(&self) -> Error {
-        Error::MissingOptionValue(self.type_name(), self.path.last().cloned())
+    fn invalid_argument(&self, key: Cow<'static, str>) -> Error {
+        Error::InvalidArgument(
+            key,
+            self.path.clone(),
+            self.name(),
+            self.set
+                .patterns()
+                .iter()
+                .map(|pattern| {
+                    pattern
+                        .trim_start_matches('^')
+                        .trim_end_matches('$')
+                        .to_string()
+                })
+                .collect(),
+        )
     }
 
-    fn missing_required(&self, name: impl Into<Cow<'static, str>>) -> Error {
-        Error::MissingRequiredValue(self.path.clone(), self.name(), name.into())
+    fn missing_option(&self) -> Error {
+        Error::MissingOptionValue(self.type_name(), self.path.clone())
+    }
+
+    fn missing_required(&self, type_name: impl Into<Cow<'static, str>>) -> Error {
+        Error::MissingRequiredValue(self.path.clone(), self.name(), type_name.into())
     }
 
     fn duplicate_option(&self) -> Error {
-        Error::DuplicateOption(self.path.last().cloned())
+        Error::DuplicateOption(self.path.clone())
     }
 
     fn invalid_option(&self, value: Cow<'static, str>) -> Error {
-        Error::InvalidOptionValue(value, self.path.last().cloned())
+        Error::InvalidOptionValue(value, self.path.clone())
     }
 
     fn failed_parse(&self, value: Cow<'static, str>) -> Error {
-        Error::FailedToParseOptionValue(value, self.type_name(), self.path.last().cloned())
+        Error::FailedToParseOptionValue(value, self.type_name(), self.path.clone(), self.name())
     }
 
     fn restore(&mut self, key: Cow<'static, str>) {
@@ -244,7 +265,7 @@ impl<'a> Context<'a> {
             state.meta = Some(meta);
         }
         if let Some(set) = set {
-            state.set = Some(set);
+            state.set = set;
         }
         if let Some(index) = index {
             state.index = Some(index);
@@ -283,7 +304,7 @@ impl<T, P: Parse<Value = Option<T>>> Parser<P> {
             path: &mut Vec::new(),
             short: &self.short,
             long: &self.long,
-            set: None,
+            set: &RegexSet::empty(),
             index: None,
             meta: None,
             style: &*self.style,
@@ -375,48 +396,42 @@ impl<P: Parse> Parse for Node<P> {
             return Err(Error::DuplicateNode);
         }
 
-        let mut run = || {
-            let mut outer = self.parse.initialize(context.own())?;
-            if self.indices.indices.is_empty() && self.indices.positions.is_empty() {
-                return self.parse.finalize(outer, context.own());
-            }
-
-            let mut positions = self.indices.positions.iter().copied().enumerate();
-            while let Some(key) = context.key(&self.indices.swizzles)? {
-                let (key, index) = match self.indices.indices.get(&key).copied() {
-                    Some(HELP) => return Err(Error::Help(None)),
-                    Some(VERSION) => return Err(Error::Version(None)),
-                    Some(LICENSE) => return Err(Error::License(None)),
-                    Some(AUTHOR) => return Err(Error::Author(None)),
-                    Some(BREAK) => break,
-                    Some(index) => (Key::Name(key), index),
-                    None => match positions.next() {
-                        Some((i, index)) => {
-                            context.restore(key);
-                            (Key::Index(i), index)
-                        }
-                        None => {
-                            let suggestions = Spell::new().suggest(
-                                &key,
-                                self.indices.indices.keys().cloned(),
-                                min(key.len() / 3, 3),
-                            );
-                            return Err(Error::UnrecognizedArgument(key, suggestions));
-                        }
-                    },
-                };
-                context.path.push(key);
-                outer = self
-                    .parse
-                    .parse(outer, context.with(Some(&self.meta), None, Some(index)))?;
-                context.path.pop();
-            }
-            self.parse.finalize(outer, context.own())
-        };
-        match run() {
-            Ok(values) => Ok(Some(values)),
-            Err(error) => Err(fill(error, &self.meta, context.path, context.style)),
+        let mut outer = self.parse.initialize(context.own())?;
+        if self.indices.indices.is_empty() && self.indices.positions.is_empty() {
+            return Ok(Some(self.parse.finalize(outer, context)?));
         }
+
+        let mut positions = self.indices.positions.iter().copied().enumerate();
+        while let Some(key) = context.key(&self.indices.swizzles)? {
+            let (key, index) = match self.indices.indices.get(&key).copied() {
+                Some(HELP) => return Err(Error::Help(None)),
+                Some(VERSION) => return Err(Error::Version(None)),
+                Some(LICENSE) => return Err(Error::License(None)),
+                Some(AUTHOR) => return Err(Error::Author(None)),
+                Some(BREAK) => break,
+                Some(index) => (Key::Name(key), index),
+                None => match positions.next() {
+                    Some((i, index)) => {
+                        context.restore(key);
+                        (Key::Index(i), index)
+                    }
+                    None => {
+                        let suggestions = Spell::new().suggest(
+                            &key,
+                            self.indices.indices.keys().cloned(),
+                            min(key.len() / 3, 3),
+                        );
+                        return Err(Error::UnrecognizedArgument(key, suggestions));
+                    }
+                },
+            };
+            context.path.push(key);
+            outer = self
+                .parse
+                .parse(outer, context.with(None, None, Some(index)))?;
+            context.path.pop();
+        }
+        Ok(Some(self.parse.finalize(outer, context.own())?))
     }
 
     fn finalize(&self, state: Self::State, _: Context) -> Result<Self::Value, Error> {
@@ -430,25 +445,19 @@ impl<P: Parse> Parse for With<P> {
 
     fn initialize(&self, mut context: Context) -> Result<Self::State, Error> {
         self.parse
-            .initialize(context.with(Some(&self.meta), self.set.as_ref(), None))
+            .initialize(context.with(Some(&self.meta), Some(&self.set), None))
             .map_err(|error| fill(error, &self.meta, context.path, context.style))
     }
 
     fn parse(&self, state: Self::State, mut context: Context) -> Result<Self::State, Error> {
         self.parse
-            .parse(
-                state,
-                context.with(Some(&self.meta), self.set.as_ref(), None),
-            )
+            .parse(state, context.with(Some(&self.meta), Some(&self.set), None))
             .map_err(|error| fill(error, &self.meta, context.path, context.style))
     }
 
     fn finalize(&self, state: Self::State, mut context: Context) -> Result<Self::Value, Error> {
         self.parse
-            .finalize(
-                state,
-                context.with(Some(&self.meta), self.set.as_ref(), None),
-            )
+            .finalize(state, context.with(Some(&self.meta), Some(&self.set), None))
             .map_err(|error| fill(error, &self.meta, context.path, context.style))
     }
 }
@@ -542,7 +551,8 @@ impl<T, F: Fn(&str) -> Option<T>, P: Parse<Value = Option<T>>> Parse for Environ
                         self.1.clone(),
                         value.clone(),
                         context.type_name(),
-                        context.path.last().cloned(),
+                        context.path.clone(),
+                        context.name(),
                     )),
                 },
                 None => Ok(None),
@@ -575,11 +585,13 @@ impl<T: FromStr> Parse for Value<T> {
             _ => return Err(context.missing_option()),
         };
         match (argument.parse::<T>(), &self.tag, &mut context.index) {
-            (Ok(value), _, _) => match context.set {
-                Some(set) if set.is_empty() || set.is_match(&argument) => Ok(Some(value)),
-                Some(_) => Err(context.invalid_option(argument)),
-                None => Ok(Some(value)),
-            },
+            (Ok(value), _, _) => {
+                if context.set.is_empty() || context.set.is_match(&argument) {
+                    Ok(Some(value))
+                } else {
+                    Err(context.invalid_option(argument))
+                }
+            }
             (Err(_), Some(tag), Some(index)) if *index == 0 => {
                 context.arguments.push_front(argument);
                 *index += 1;

@@ -9,9 +9,9 @@ pub enum Error {
     Author(Option<String>),
     License(Option<String>),
 
-    MissingOptionValue(Option<Cow<'static, str>>, Option<Key>),
+    MissingOptionValue(Option<Cow<'static, str>>, Vec<Key>),
     MissingRequiredValue(Vec<Key>, Option<Key>, Cow<'static, str>),
-    DuplicateOption(Option<Key>),
+    DuplicateOption(Vec<Key>),
     UnrecognizedArgument(Cow<'static, str>, Vec<(Cow<'static, str>, usize)>),
     ExcessArguments(VecDeque<Cow<'static, str>>),
     DuplicateName(String),
@@ -22,9 +22,15 @@ pub enum Error {
         Cow<'static, str>,
         Cow<'static, str>,
         Option<Cow<'static, str>>,
+        Vec<Key>,
         Option<Key>,
     ),
-    FailedToParseOptionValue(Cow<'static, str>, Option<Cow<'static, str>>, Option<Key>),
+    FailedToParseOptionValue(
+        Cow<'static, str>,
+        Option<Cow<'static, str>>,
+        Vec<Key>,
+        Option<Key>,
+    ),
     DuplicateNode,
     GroupNestingLimitOverflow,
     InvalidIndex(usize),
@@ -40,7 +46,8 @@ pub enum Error {
     InvalidSwizzleOption(char),
     InvalidOptionType(Cow<'static, str>),
     InvalidInitialization,
-    InvalidOptionValue(Cow<'static, str>, Option<Key>),
+    InvalidOptionValue(Cow<'static, str>, Vec<Key>),
+    InvalidArgument(Cow<'static, str>, Vec<Key>, Option<Key>, Vec<String>),
 }
 
 impl error::Error for Error {}
@@ -63,18 +70,16 @@ impl fmt::Display for Error {
             Error::License(Some(author)) => write!(f, "{author}")?,
             Error::License(None) => write!(f, "Missing license.")?,
 
+            Error::InvalidArgument(argument, path, name, patterns) => {
+                write!(f, "Invalid argument '{argument}'")?;
+                write_join(f, " for ", "", " ", path.iter().chain(name))?;
+                write!(f, ".")?;
+                write_join(f, " Argument must match '", "'.", " | ", patterns)?;
+            }
             Error::UnrecognizedArgument(argument, suggestions) => {
                 write!(f, "Unrecognized argument '{argument}'.")?;
-                let mut join = false;
-                for (suggestion, _) in suggestions {
-                    if join {
-                        write!(f, ", ")?;
-                    } else {
-                        write!(f, " Similar matches: ")?;
-                        join = true;
-                    }
-                    write!(f, "'{suggestion}'")?;
-                }
+                let suggestions = suggestions.iter().map(|(suggestion, _)| format!("'{suggestion}'"));
+                write_join(f, " Similar matches: ", ".", ", ", suggestions)?;
             }
             Error::ExcessArguments(arguments) => {
                 write!(f, "Excess arguments '")?;
@@ -89,40 +94,25 @@ impl fmt::Display for Error {
                 }
                 write!(f, "'.")?;
             }
-            Error::MissingOptionValue(type_name, option) => {
+            Error::MissingOptionValue(type_name, path) => {
                 write!(f, "Missing value")?;
                 if let Some(type_name) = type_name {
                     write!(f, " of type '{type_name}'")?;
                 }
-                if let Some(option) = option {
-                    write!(f, " for option '{option}'")?;
-                }
+                write_join(f, " for option ", "", " ", path.iter())?;
                 write!(f, ".")?;
             }
-            Error::DuplicateOption(key) => {
+            Error::DuplicateOption(path) => {
                 write!(f, "Duplicate option")?;
-                if let Some(key) = key {
-                    write!(f, " '{key}'")?;
-                }
+                write_join(f, " ", "", " ", path.iter())?;
                 write!(f, ".")?;
             }
-            Error::MissingRequiredValue(path, key, type_name) => {
+            Error::MissingRequiredValue(path, name, type_name) => {
                 write!(f, "Missing required value of type '{type_name}'")?;
-                let mut has = false;
-                for key in path.iter().chain(key) {
-                    if replace(&mut has, true) {
-                        write!(f, " ")?;
-                    } else {
-                        write!(f, " for '")?;
-                    }
-                    write!(f, "{key}")?;
-                }
-                if has {
-                    write!(f, "'")?;
-                }
+                write_join(f, " for ", "", " ", path.iter().chain(name))?;
                 write!(f, ".")?;
             }
-            Error::FailedToParseEnvironmentVariable(key, value, type_name, option) => {
+            Error::FailedToParseEnvironmentVariable(key, value, type_name, path, name) => {
                 write!(
                     f,
                     "Failed to parse environment variable '{key}' with value '{value}'"
@@ -130,19 +120,15 @@ impl fmt::Display for Error {
                 if let Some(type_name) = type_name {
                     write!(f, " as type '{type_name}'")?;
                 }
-                if let Some(option) = option {
-                    write!(f, " for option '{option}'")?;
-                }
+                write_join(f, " for option ", "", " ", path.iter().chain(name))?;
                 write!(f, ".")?;
             }
-            Error::FailedToParseOptionValue(value, type_name, option) => {
+            Error::FailedToParseOptionValue(value, type_name, path, name) => {
                 write!(f, "Failed to parse value '{value}'")?;
                 if let Some(type_name) = type_name {
                     write!(f, " as type '{type_name}'")?;
                 }
-                if let Some(option) = option {
-                    write!(f, " for option '{option}'")?;
-                }
+                write_join(f, " for option ", "", " ", path.iter().chain(name))?;
                 write!(f, ".")?;
             }
             Error::InvalidPrefix(short, long) => write!(f, "Invalid prefix '{short}' or '{long}'. A valid prefix is non-empty, contains only non-alpha-numeric characters and differs from the other prefix.")?,
@@ -152,11 +138,9 @@ impl fmt::Display for Error {
             Error::InvalidVerbName(name) => write!(f, "Invalid verb name '{name}'. A valid verb name is non-empty and contains only ascii characters.")?,
             Error::InvalidOptionName(name) => write!(f, "Invalid option name '{name}'. A valid option name is non-empty and contains only ascii characters.")?,
             Error::InvalidOptionType(type_name) => write!(f, "Invalid option type '{type_name}'.")?,
-            Error::InvalidOptionValue(value, name) => {
+            Error::InvalidOptionValue(value, path) => {
                 write!(f, "Invalid value '{value}'")?;
-                if let Some(name) = name {
-                    write!(f, " for option '{name}'")?;
-                }
+                write_join(f, " for option ", "", " ", path.iter())?;
                 write!(f, ".")?;
             }
             Error::InvalidParseState => write!(f, "Invalid parse state.")?,
@@ -218,3 +202,49 @@ impl From<Cow<'static, str>> for Error {
         Error::Other(value)
     }
 }
+
+fn write_join(
+    formatter: &mut fmt::Formatter,
+    prefix: impl fmt::Display,
+    suffix: impl fmt::Display,
+    separator: impl fmt::Display,
+    items: impl IntoIterator<Item = impl fmt::Display>,
+) -> Result<(), fmt::Error> {
+    let mut has = false;
+    for item in items.into_iter() {
+        if replace(&mut has, true) {
+            write!(formatter, "{separator}")?;
+        } else {
+            write!(formatter, "{prefix}")?;
+        }
+        write!(formatter, "{item}")?;
+    }
+    if has {
+        write!(formatter, "{suffix}")?;
+    }
+    Ok(())
+}
+
+// fn write_join(
+//     formatter: &mut fmt::Formatter,
+//     prefix: impl fmt::Display,
+//     suffix: impl fmt::Display,
+//     path: impl IntoIterator<Item = impl Deref<Target = Key>>,
+// ) -> Result<bool, fmt::Error> {
+//     let mut has = false;
+//     for key in path.into_iter() {
+//         let key = key.deref();
+//         if replace(&mut has, true) {
+//             write!(formatter, " ")?;
+//         } else {
+//             write!(formatter, "{prefix}'")?;
+//         }
+//         write!(formatter, "{key}")?;
+//     }
+//     if has {
+//         write!(formatter, "'{suffix}")?;
+//         Ok(true)
+//     } else {
+//         Ok(false)
+//     }
+// }
