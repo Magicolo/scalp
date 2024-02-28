@@ -55,8 +55,8 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         .map(|(commands, (kroule,))| Root { commands, kroule })
         .note("A note.")
         .build()?
-        .parse_with(["fett", "--help"], [("", "")])?;
-    // .parse()?;
+        // .parse_with(["fett", "j", "--help"], [("", "")])?;
+        .parse()?;
     println!("{:?}", root);
     Ok(())
 }

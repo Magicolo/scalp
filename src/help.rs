@@ -300,15 +300,19 @@ impl<'a, S: Style + ?Sized + 'a> Helper<'a, S> {
 
             match Meta::descend(
                 metas,
-                (),
+                None,
                 false,
-                1,
+                usize::MAX,
                 |state, _| ControlFlow::Continue(state),
                 |state, meta| match meta {
-                    Meta::Require(value) => {
-                        width += control(self.write((' ', '<', value, '>')))?;
-                        ControlFlow::Continue(state)
+                    Meta::Require(value) => ControlFlow::Continue(Some(value)),
+                    Meta::Group(_) | Meta::Root(_) => {
+                        if let Some(value) = state {
+                            width += control(self.write((' ', '<', value, '>')))?;
+                        }
+                        ControlFlow::Continue(None)
                     }
+                    Meta::Option(_) | Meta::Verb(_) => ControlFlow::Continue(None),
                     _ => ControlFlow::Continue(state),
                 },
             ) {
@@ -573,7 +577,7 @@ impl<'a, S: Style + ?Sized + 'a> Helper<'a, S> {
             width += count;
             has |= count > 0;
 
-            width += helper.usage(
+            let count = helper.usage(
                 root,
                 metas,
                 (
@@ -596,6 +600,8 @@ impl<'a, S: Style + ?Sized + 'a> Helper<'a, S> {
                 ),
                 helper.style.end(Item::Usage),
             )?;
+            width += count;
+            has |= count > 0;
             Ok(())
         })?;
 

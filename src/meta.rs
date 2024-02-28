@@ -135,7 +135,7 @@ impl Meta {
             1,
             |state, meta| {
                 ControlFlow::<(), _>::Continue(match meta {
-                    Meta::Require(value) => state.or(Some(value.clone())),
+                    Meta::Require(value) => state.or(Some(value)),
                     _ => state,
                 })
             },
@@ -156,36 +156,36 @@ impl Meta {
             |state, meta| {
                 ControlFlow::<(), _>::Continue(match meta {
                     Meta::Name(Name::Plain, value) => {
-                        (state.0.or(Some(value.clone())), state.1, state.2, state.3)
+                        (state.0.or(Some(value)), state.1, state.2, state.3)
                     }
                     Meta::Name(Name::Short, value) => {
-                        (state.0, state.1.or(Some(value.clone())), state.2, state.3)
+                        (state.0, state.1.or(Some(value)), state.2, state.3)
                     }
                     Meta::Name(Name::Long, value) => {
-                        (state.0, state.1, state.2.or(Some(value.clone())), state.3)
+                        (state.0, state.1, state.2.or(Some(value)), state.3)
                     }
-                    Meta::Position(value) => (state.0, state.1, state.2, state.3.or(Some(*value))),
+                    Meta::Position(value) => (state.0, state.1, state.2, state.3.or(Some(value))),
                     _ => state,
                 })
             },
             |state, _| ControlFlow::Continue(state),
         );
         match control {
-            ControlFlow::Continue((Some(value), _, _, _)) => Some(Key::Name(value)),
-            ControlFlow::Continue((_, Some(value), _, _)) => Some(Key::Name(value)),
-            ControlFlow::Continue((_, _, Some(value), _)) => Some(Key::Name(value)),
-            ControlFlow::Continue((_, _, _, Some(value))) => Some(Key::Index(value)),
+            ControlFlow::Continue((Some(value), _, _, _)) => Some(Key::Name(value.clone())),
+            ControlFlow::Continue((_, Some(value), _, _)) => Some(Key::Name(value.clone())),
+            ControlFlow::Continue((_, _, Some(value), _)) => Some(Key::Name(value.clone())),
+            ControlFlow::Continue((_, _, _, Some(value))) => Some(Key::Index(*value)),
             _ => None,
         }
     }
 
-    pub(crate) fn descend<T, S>(
-        metas: &[Meta],
+    pub(crate) fn descend<'a, T, S>(
+        metas: &'a [Meta],
         mut state: S,
         hidden: bool,
         depth: usize,
-        mut down: impl FnMut(S, &Meta) -> ControlFlow<T, S>,
-        mut up: impl FnMut(S, &Meta) -> ControlFlow<T, S>,
+        mut down: impl FnMut(S, &'a Meta) -> ControlFlow<T, S>,
+        mut up: impl FnMut(S, &'a Meta) -> ControlFlow<T, S>,
     ) -> ControlFlow<T, S> {
         if hidden {
             for meta in metas {
@@ -225,13 +225,13 @@ impl Meta {
         })
     }
 
-    fn descend_one<T, S>(
-        &self,
+    fn descend_one<'a, T, S>(
+        &'a self,
         mut state: S,
         hidden: bool,
         depth: usize,
-        down: &mut impl FnMut(S, &Self) -> ControlFlow<T, S>,
-        up: &mut impl FnMut(S, &Self) -> ControlFlow<T, S>,
+        down: &mut impl FnMut(S, &'a Self) -> ControlFlow<T, S>,
+        up: &mut impl FnMut(S, &'a Self) -> ControlFlow<T, S>,
     ) -> ControlFlow<T, S> {
         state = down(state, self)?;
         if depth > 0 {

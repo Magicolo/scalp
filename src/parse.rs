@@ -24,6 +24,7 @@ pub struct Context<'a> {
     short: &'a str,
     long: &'a str,
     set: &'a RegexSet,
+    root: Option<&'a Meta>,
     meta: Option<&'a Meta>,
     style: &'a dyn style::Style,
     index: Option<usize>,
@@ -70,7 +71,7 @@ pub struct Many<P, I, N, F> {
 pub struct Map<P, F>(pub(crate) P, pub(crate) F);
 pub struct Require<P>(pub(crate) P);
 pub struct Default<P, T>(pub(crate) P, pub(crate) T);
-pub struct Environment<P, F>(pub(crate) P, pub(crate) Cow<'static, str>, pub(crate) F);
+pub struct Environment<P>(pub(crate) P, pub(crate) Cow<'static, str>);
 pub struct At<P = ()>(pub(crate) P);
 
 #[derive(Clone, PartialEq)]
@@ -162,6 +163,7 @@ impl<'a> Context<'a> {
             short: self.short,
             long: self.long,
             set: self.set,
+            root: self.root,
             meta: self.meta,
             index: self.index,
             style: self.style,
@@ -266,6 +268,7 @@ impl<'a> Context<'a> {
     fn with<'b>(&'b mut self, meta: Option<&'b Meta>, set: Option<&'b RegexSet>) -> Context<'b> {
         let mut state = self.own();
         if let Some(meta) = meta {
+            state.root = state.root.or(Some(meta));
             state.meta = Some(meta);
         }
         if let Some(set) = set {
@@ -307,6 +310,7 @@ impl<T, P: Parse<Value = Option<T>>> Parser<P> {
             long: &self.long,
             set: &RegexSet::empty(),
             index: None,
+            root: None,
             meta: None,
             style: &*self.style,
         };
@@ -443,12 +447,14 @@ impl<P: Parse> Parse for With<P> {
     type Value = P::Value;
 
     fn initialize(&self, mut context: Context) -> Result<Self::State, Error> {
-        let mut context = context.with(Some(&self.meta), Some(&self.set));
-        match self.parse.initialize(context.own()) {
+        match self
+            .parse
+            .initialize(context.with(Some(&self.meta), Some(&self.set)))
+        {
             Ok(state) => Ok(state),
             Err(error) => Err(fill(
                 error,
-                context.meta.unwrap_or(&self.meta),
+                context.root.unwrap_or(&self.meta),
                 &self.meta,
                 context.path,
                 context.style,
@@ -457,12 +463,14 @@ impl<P: Parse> Parse for With<P> {
     }
 
     fn parse(&self, state: Self::State, mut context: Context) -> Result<Self::State, Error> {
-        let mut context = context.with(Some(&self.meta), Some(&self.set));
-        match self.parse.parse(state, context.own()) {
+        match self
+            .parse
+            .parse(state, context.with(Some(&self.meta), Some(&self.set)))
+        {
             Ok(state) => Ok(state),
             Err(error) => Err(fill(
                 error,
-                context.meta.unwrap_or(&self.meta),
+                context.root.unwrap_or(&self.meta),
                 &self.meta,
                 context.path,
                 context.style,
@@ -471,12 +479,14 @@ impl<P: Parse> Parse for With<P> {
     }
 
     fn finalize(&self, state: Self::State, mut context: Context) -> Result<Self::Value, Error> {
-        let mut context = context.with(Some(&self.meta), Some(&self.set));
-        match self.parse.finalize(state, context.own()) {
+        match self
+            .parse
+            .finalize(state, context.with(Some(&self.meta), Some(&self.set)))
+        {
             Ok(value) => Ok(value),
             Err(error) => Err(fill(
                 error,
-                context.meta.unwrap_or(&self.meta),
+                context.root.unwrap_or(&self.meta),
                 &self.meta,
                 context.path,
                 context.style,
@@ -558,7 +568,7 @@ impl<T, F: Fn() -> T, P: Parse<Value = Option<T>>> Parse for Default<P, F> {
     }
 }
 
-impl<T, F: Fn(&str) -> Option<T>, P: Parse<Value = Option<T>>> Parse for Environment<P, F> {
+impl<T: FromStr, P: Parse<Value = Option<T>>> Parse for Environment<P> {
     type State = P::State;
     type Value = P::Value;
 
@@ -574,9 +584,9 @@ impl<T, F: Fn(&str) -> Option<T>, P: Parse<Value = Option<T>>> Parse for Environ
         match self.0.finalize(state, context.own())? {
             Some(value) => Ok(Some(value)),
             None => match context.environment.get(&self.1) {
-                Some(value) => match self.2(value) {
-                    Some(value) => Ok(Some(value)),
-                    None => Err(Error::FailedToParseEnvironmentVariable(
+                Some(value) => match value.parse::<T>() {
+                    Ok(value) => Ok(Some(value)),
+                    Err(_) => Err(Error::FailedToParseEnvironmentVariable(
                         self.1.clone(),
                         value.clone(),
                         context.type_name(),

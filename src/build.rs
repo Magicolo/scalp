@@ -536,24 +536,13 @@ impl<S: Scope, P> Builder<S, P> {
     pub fn environment<T: FromStr>(
         self,
         variable: impl Into<Cow<'static, str>>,
-    ) -> Builder<S, Environment<P, impl Fn(&str) -> Option<T>>>
-    where
-        P: Parse<Value = Option<T>>,
-    {
-        self.environment_with(variable, |value| value.parse().ok())
-    }
-
-    pub fn environment_with<T, F: Fn(&str) -> Option<T>>(
-        self,
-        variable: impl Into<Cow<'static, str>>,
-        parse: F,
-    ) -> Builder<S, Environment<P, F>>
+    ) -> Builder<S, Environment<P>>
     where
         P: Parse<Value = Option<T>>,
     {
         let variable = variable.into();
         self.meta(Meta::Environment(variable.clone()))
-            .map_parse(|inner| Environment(inner, variable, parse))
+            .map_parse(|inner| Environment(inner, variable))
     }
 
     pub fn many<T, I: default::Default + Extend<T>>(
