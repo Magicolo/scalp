@@ -12,10 +12,15 @@ pub enum Command {
     Fett { jango: Option<Jango> },
 }
 
+#[derive(Debug)]
+pub struct Root {
+    pub commands: Vec<Command>,
+    pub kroule: String,
+}
+
 fn main() -> Result<(), Box<dyn error::Error>> {
-    let commands = Parser::builder()
+    let root = Parser::builder()
         .pipe(header!())
-        .usage("Usage: scalp [OPTIONS]")
         .group(|group| {
             group
                 .verb(|verb| {
@@ -41,11 +46,17 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                 .require_with("command")
         })
         .line()
-        .group(|group| group.name("Options:").options(Options::all(true, true)))
-        .map(|(commands, _)| commands)
+        .group(|group| {
+            group
+                .name("Options:")
+                .option(|option| option.name("kroule").require())
+                .options(Options::all(true, true))
+        })
+        .map(|(commands, (kroule,))| Root { commands, kroule })
         .note("A note.")
         .build()?
-        .parse()?;
-    println!("{:?}", commands);
+        .parse_with(["fett", "--help"], [("", "")])?;
+    // .parse()?;
+    println!("{:?}", root);
     Ok(())
 }

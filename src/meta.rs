@@ -1,5 +1,6 @@
+use crate::parse::Key;
 use core::num::NonZeroUsize;
-use std::{borrow::Cow, iter::from_fn};
+use std::{borrow::Cow, iter::from_fn, ops::ControlFlow, slice::from_ref};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Name {
@@ -24,7 +25,7 @@ pub enum Meta {
     Note(Cow<'static, str>),
     Type(Cow<'static, str>),
     Valid(Cow<'static, str>),
-    Require,
+    Require(Cow<'static, str>),
     Many(Option<NonZeroUsize>),
     Default(Cow<'static, str>),
     Environment(Cow<'static, str>),
@@ -98,7 +99,7 @@ impl Meta {
             Meta::Usage(value) => Meta::Usage(value.clone()),
             Meta::Note(value) => Meta::Note(value.clone()),
             Meta::Type(value) => Meta::Type(value.clone()),
-            Meta::Require => Meta::Require,
+            Meta::Require(value) => Meta::Require(value.clone()),
             Meta::Many(value) => Meta::Many(*value),
             Meta::Default(value) => Meta::Default(value.clone()),
             Meta::Environment(value) => Meta::Environment(value.clone()),
@@ -126,6 +127,78 @@ impl Meta {
         }
     }
 
+    pub(crate) fn require(&self) -> Option<Cow<'static, str>> {
+        let control = Self::descend(
+            from_ref(self),
+            None,
+            false,
+            1,
+            |state, meta| {
+                ControlFlow::<(), _>::Continue(match meta {
+                    Meta::Require(value) => state.or(Some(value.clone())),
+                    _ => state,
+                })
+            },
+            |state, _| ControlFlow::Continue(state),
+        );
+        match control {
+            ControlFlow::Continue(Some(value)) => Some(value.clone()),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn key(&self) -> Option<Key> {
+        let control = Self::descend(
+            from_ref(self),
+            (None, None, None, None),
+            false,
+            1,
+            |state, meta| {
+                ControlFlow::<(), _>::Continue(match meta {
+                    Meta::Name(Name::Plain, value) => {
+                        (state.0.or(Some(value.clone())), state.1, state.2, state.3)
+                    }
+                    Meta::Name(Name::Short, value) => {
+                        (state.0, state.1.or(Some(value.clone())), state.2, state.3)
+                    }
+                    Meta::Name(Name::Long, value) => {
+                        (state.0, state.1, state.2.or(Some(value.clone())), state.3)
+                    }
+                    Meta::Position(value) => (state.0, state.1, state.2, state.3.or(Some(*value))),
+                    _ => state,
+                })
+            },
+            |state, _| ControlFlow::Continue(state),
+        );
+        match control {
+            ControlFlow::Continue((Some(value), _, _, _)) => Some(Key::Name(value)),
+            ControlFlow::Continue((_, Some(value), _, _)) => Some(Key::Name(value)),
+            ControlFlow::Continue((_, _, Some(value), _)) => Some(Key::Name(value)),
+            ControlFlow::Continue((_, _, _, Some(value))) => Some(Key::Index(value)),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn descend<T, S>(
+        metas: &[Meta],
+        mut state: S,
+        hidden: bool,
+        depth: usize,
+        mut down: impl FnMut(S, &Meta) -> ControlFlow<T, S>,
+        mut up: impl FnMut(S, &Meta) -> ControlFlow<T, S>,
+    ) -> ControlFlow<T, S> {
+        if hidden {
+            for meta in metas {
+                state = meta.descend_one(state, hidden, depth, &mut down, &mut up)?;
+            }
+        } else {
+            for meta in Meta::visible(metas) {
+                state = meta.descend_one(state, hidden, depth, &mut down, &mut up)?;
+            }
+        }
+        ControlFlow::Continue(state)
+    }
+
     pub(crate) fn children(&self) -> &[Meta] {
         match self {
             Meta::Root(metas) | Meta::Option(metas) | Meta::Verb(metas) | Meta::Group(metas) => {
@@ -150,5 +223,28 @@ impl Meta {
                 meta => return Some(meta),
             }
         })
+    }
+
+    fn descend_one<T, S>(
+        &self,
+        mut state: S,
+        hidden: bool,
+        depth: usize,
+        down: &mut impl FnMut(S, &Self) -> ControlFlow<T, S>,
+        up: &mut impl FnMut(S, &Self) -> ControlFlow<T, S>,
+    ) -> ControlFlow<T, S> {
+        state = down(state, self)?;
+        if depth > 0 {
+            if hidden {
+                for child in self.children() {
+                    state = child.descend_one(state, hidden, depth - 1, down, up)?;
+                }
+            } else {
+                for child in Self::visible(self.children()) {
+                    state = child.descend_one(state, hidden, depth - 1, down, up)?;
+                }
+            }
+        }
+        up(state, self)
     }
 }

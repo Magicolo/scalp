@@ -10,7 +10,11 @@ use core::{
     mem::{replace, take},
     slice::from_ref,
 };
-use std::{borrow::Cow, fs, ops::Deref};
+use std::{
+    borrow::Cow,
+    fs,
+    ops::{ControlFlow, Deref},
+};
 
 struct Helper<'a, S: Style + ?Sized> {
     buffer: &'a mut String,
@@ -255,14 +259,65 @@ impl<'a, S: Style + ?Sized + 'a> Helper<'a, S> {
 
     fn usage(
         &mut self,
+        root: &Meta,
         metas: &[Meta],
         prefix: impl Format,
         suffix: impl Format,
     ) -> Result<usize, fmt::Error> {
-        self.join(metas, prefix, suffix, " ", |meta| match meta {
+        let mut width = self.join(metas, &prefix, &suffix, " ", |meta| match meta {
             Meta::Usage(value) => Some(Cow::Borrowed(value)),
             _ => None,
-        })
+        })?;
+        if width == 0 {
+            width += self.write(prefix)?;
+            width += self.write("Usage: ")?;
+            let mut has = false;
+            for key in root.key().as_ref().into_iter().chain(self.path) {
+                if replace(&mut has, true) {
+                    width += self.write(" ")?;
+                }
+                width += self.write(key)?;
+            }
+
+            match Meta::descend(
+                metas,
+                (),
+                false,
+                usize::MAX,
+                |state, meta| match meta {
+                    Meta::Option(_) => ControlFlow::Break(self.write(" [OPTIONS]")),
+                    _ => ControlFlow::Continue(state),
+                },
+                |state, _| ControlFlow::Continue(state),
+            ) {
+                ControlFlow::Break(result) => width += result?,
+                ControlFlow::Continue(_) => {}
+            }
+
+            fn control(result: Result<usize, fmt::Error>) -> ControlFlow<fmt::Error, usize> {
+                result.map_or_else(ControlFlow::Break, ControlFlow::Continue)
+            }
+
+            match Meta::descend(
+                metas,
+                (),
+                false,
+                1,
+                |state, _| ControlFlow::Continue(state),
+                |state, meta| match meta {
+                    Meta::Require(value) => {
+                        width += control(self.write((' ', '<', value, '>')))?;
+                        ControlFlow::Continue(state)
+                    }
+                    _ => ControlFlow::Continue(state),
+                },
+            ) {
+                ControlFlow::Break(error) => Err(error),
+                ControlFlow::Continue(_) => Ok(width + self.write(suffix)?),
+            }
+        } else {
+            Ok(width)
+        }
     }
 
     fn columns(&self, metas: &[Meta], depth: usize) -> Columns {
@@ -270,8 +325,11 @@ impl<'a, S: Style + ?Sized + 'a> Helper<'a, S> {
         let mut columns = Columns::default();
         for meta in Meta::visible(metas) {
             match meta {
-                Meta::Position(_) if depth == 0 => {
+                Meta::Position(position) if *position < 10 && depth == 0 => {
                     columns.short += 3 + if replace(&mut short, true) { 2 } else { 0 }
+                }
+                Meta::Position(_) if depth == 0 => {
+                    columns.short += 4 + if replace(&mut short, true) { 2 } else { 0 }
                 }
                 Meta::Name(Name::Short, value) if depth == 0 => {
                     columns.short += value.len() + if replace(&mut short, true) { 2 } else { 0 }
@@ -303,7 +361,7 @@ impl<'a, S: Style + ?Sized + 'a> Helper<'a, S> {
 
     fn tags(&mut self, metas: &[Meta]) -> Result<usize, fmt::Error> {
         let mut width = self.join(metas, "", "", ", ", |meta| match meta {
-            Meta::Require => Some(Cow::Borrowed("require")),
+            Meta::Require(_) => Some(Cow::Borrowed("require")),
             Meta::Swizzle => Some(Cow::Borrowed("swizzle")),
             Meta::Many(_) => Some(Cow::Borrowed("many")),
             _ => None,
@@ -322,7 +380,7 @@ impl<'a, S: Style + ?Sized + 'a> Helper<'a, S> {
         Ok(width)
     }
 
-    fn node(&mut self, metas: &[Meta], depth: usize) -> fmt::Result {
+    fn node(&mut self, root: &Meta, metas: &[Meta], depth: usize) -> fmt::Result {
         let columns = self.columns(metas, 1);
         let mut helper = self.own();
         for meta in Meta::visible(metas) {
@@ -355,8 +413,8 @@ impl<'a, S: Style + ?Sized + 'a> Helper<'a, S> {
                     helper.write_line("")?;
                 }
                 Meta::Root(metas) => {
-                    helper.write_header(metas)?;
-                    helper.node(metas, depth + 1)?;
+                    helper.write_header(root, metas)?;
+                    helper.node(root, metas, depth + 1)?;
                 }
                 Meta::Group(metas) => {
                     helper.indentation()?;
@@ -369,15 +427,15 @@ impl<'a, S: Style + ?Sized + 'a> Helper<'a, S> {
                     )?;
                     if width > 0 {
                         helper.write_line("")?;
-                        helper.indent().node(metas, depth + 1)?;
+                        helper.indent().node(root, metas, depth + 1)?;
                         helper.write_line("")?;
                     } else {
-                        helper.node(metas, depth + 1)?;
+                        helper.node(root, metas, depth + 1)?;
                     }
                 }
                 Meta::Verb(metas) if depth == 0 => {
-                    helper.write_header(metas)?;
-                    helper.node(metas, depth + 1)?;
+                    helper.write_header(root, metas)?;
+                    helper.node(root, metas, depth + 1)?;
                 }
                 Meta::Verb(metas) => {
                     helper.indentation()?;
@@ -423,7 +481,7 @@ impl<'a, S: Style + ?Sized + 'a> Helper<'a, S> {
         Ok(())
     }
 
-    fn write_header(&mut self, metas: &[Meta]) -> Result<usize, fmt::Error> {
+    fn write_header(&mut self, root: &Meta, metas: &[Meta]) -> Result<usize, fmt::Error> {
         let mut width = 0;
         width += self.write_line(())?;
         width += self.indentation()?;
@@ -516,6 +574,7 @@ impl<'a, S: Style + ?Sized + 'a> Helper<'a, S> {
             has |= count > 0;
 
             width += helper.usage(
+                root,
                 metas,
                 (
                     if has {
@@ -616,7 +675,12 @@ impl<'a, S: Style + ?Sized + 'a> Helper<'a, S> {
     }
 }
 
-pub(crate) fn help<S: Style + ?Sized>(meta: &Meta, path: &[Key], style: &S) -> Option<String> {
+pub(crate) fn help<S: Style + ?Sized>(
+    root: &Meta,
+    meta: &Meta,
+    path: &[Key],
+    style: &S,
+) -> Option<String> {
     let mut buffer = String::new();
     let mut writer = Helper {
         buffer: &mut buffer,
@@ -624,7 +688,7 @@ pub(crate) fn help<S: Style + ?Sized>(meta: &Meta, path: &[Key], style: &S) -> O
         style,
         indent: 0,
     };
-    writer.node(from_ref(meta), 0).ok()?;
+    writer.node(root, from_ref(meta), 0).ok()?;
     Some(buffer)
 }
 

@@ -597,8 +597,8 @@ impl<S: Scope, P> Builder<S, P> {
         P: Parse<Value = Option<T>>,
     {
         let format = self.convert(format);
-        self.meta(Meta::Require)
-            .map_parse(|parse| Require(parse, format))
+        self.meta(Meta::Require(format))
+            .map_parse(|parse| Require(parse))
     }
 
     pub fn help(self, help: impl Into<Cow<'static, str>>) -> Self {

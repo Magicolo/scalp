@@ -10,7 +10,7 @@ pub enum Error {
     License(Option<String>),
 
     MissingOptionValue(Option<Cow<'static, str>>, Vec<Key>),
-    MissingRequiredValue(Vec<Key>, Option<Key>, Cow<'static, str>),
+    MissingRequiredValue(Vec<Key>, Option<Key>, Option<Cow<'static, str>>),
     DuplicateOption(Vec<Key>),
     UnrecognizedArgument(Cow<'static, str>, Vec<(Cow<'static, str>, usize)>),
     ExcessArguments(VecDeque<Cow<'static, str>>),
@@ -108,7 +108,10 @@ impl fmt::Display for Error {
                 write!(f, ".")?;
             }
             Error::MissingRequiredValue(path, name, type_name) => {
-                write!(f, "Missing required value of type '{type_name}'")?;
+                write!(f, "Missing required value")?;
+                if let Some(type_name) = type_name {
+                    write!(f, " of type '{type_name}'")?;
+                }
                 write_join(f, " for ", "", " ", path.iter().chain(name))?;
                 write!(f, ".")?;
             }
