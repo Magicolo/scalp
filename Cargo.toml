@@ -16,12 +16,12 @@ rust-version = "1.70.0"
 [dependencies]
 termion = "3.0.0"
 orn = "0.4.2"
-regex = "1.10.3"
+regex = "1.10.4"
 
 [dev-dependencies]
 criterion = "0.5.1"
 skeptic = "0.13.7"
-checkito = "1.4.2"
+checkito = "1.5.1"
 
 [build-dependencies]
 skeptic = "0.13.7"

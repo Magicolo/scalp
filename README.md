@@ -18,6 +18,8 @@
 
 ## Getting Started
 ```rust
+extern crate scalp;
+
 use std::fs;
 use scalp::*;
 
