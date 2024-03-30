@@ -1,14 +1,12 @@
 <div align="center"> <h1> scalp </h1> </div>
+<div align="center"> <img src="resources/screen.png"> </div>
+<p/>
 
 <p align="center">
     <em> A declarative parsing library for pretty and highly customizable command-line interfaces. It provides a composable and extensible `Parse` trait that ensures comparative performance to a macro-full approach while offering greater flexibility and understandability.
 
 *Less magic, more control, same speed.* </em>
 </p>
-
-<div>
-    <a href="https://github.com/Magicolo/scalp"> <img src="https://github.com/Magicolo/scalp/resources/screen.png"> </a>
-</div>
 
 <div align="right">
     <a href="https://github.com/Magicolo/scalp/actions/workflows/test.yml"> <img src="https://github.com/Magicolo/scalp/actions/workflows/test.yml/badge.svg"> </a>
