@@ -1,5 +1,5 @@
 <div align="center"> <h1> scalp </h1> </div>
-<div align="center"> <img src="resources/screen.png"> </div>
+<div align="center"> <img src="resources/screen.png" onclick="event.preventDefault()"> </div>
 <p/>
 
 <p align="center">
