@@ -1,19 +1,21 @@
 <div align="center"> <h1> scalp </h1> </div>
 <div align="center"> <img src="resources/screen.png"> </div>
-<p></p>
-<div style="border: 1px solid #aaa; border-radius: 5px; padding: 1em;">
 
+---
+<p></p>
 <p align="center">
     <em> A declarative parsing library for pretty and highly customizable command-line interfaces. It provides a composable and extensible `Parse` trait that ensures comparative performance to a macro-full approach while offering greater flexibility and understandability.
 
 *Less magic, more control, same speed.* </em>
 </p>
 
-<div align="right" style="margin-top: 1em;">
+<div align="right">
     <a href="https://github.com/Magicolo/scalp/actions/workflows/test.yml"> <img src="https://github.com/Magicolo/scalp/actions/workflows/test.yml/badge.svg"> </a>
     <a href="https://crates.io/crates/scalp"> <img src="https://img.shields.io/crates/v/scalp.svg"> </a>
 </div>
-</div>
+<p></p>
+
+---
 
 ## Getting Started
 ```rust
