@@ -15,7 +15,8 @@ pub enum Command {
 #[derive(Debug)]
 pub struct Root {
     pub commands: Vec<Command>,
-    pub kroule: String,
+    pub count: usize,
+    pub name: String,
 }
 
 fn main() -> Result<(), Box<dyn error::Error>> {
@@ -49,10 +50,11 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         .group(|group| {
             group
                 .name("Options:")
-                .option(|option| option.name("kroule").require())
+                .option(|option| option.position().require())
+                .option(|option| option.name("name").require())
                 .options(Options::all(true, true))
         })
-        .map(|(commands, (kroule,))| Root { commands, kroule })
+        .map(|(commands, (count, name))| Root { commands, count, name })
         .note("A note.")
         .build()?
         // .parse_with(["fett", "j", "--help"], [("", "")])?;

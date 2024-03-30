@@ -6,6 +6,10 @@
 *Less magic, more control, same speed.* </em>
 </p>
 
+<div>
+    <a href="https://github.com/Magicolo/scalp"> <img src="https://github.com/Magicolo/scalp/resources/screen.png"> </a>
+</div>
+
 <div align="right">
     <a href="https://github.com/Magicolo/scalp/actions/workflows/test.yml"> <img src="https://github.com/Magicolo/scalp/actions/workflows/test.yml/badge.svg"> </a>
     <a href="https://crates.io/crates/scalp"> <img src="https://img.shields.io/crates/v/scalp.svg"> </a>
