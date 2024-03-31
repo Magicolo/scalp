@@ -32,7 +32,6 @@ pub enum Meta {
     Show,
     Hide,
     Swizzle,
-    Root(Vec<Meta>),
     Option(Vec<Meta>),
     Options(Options),
     Verb(Vec<Meta>),
@@ -107,10 +106,6 @@ impl Meta {
             Meta::Hide => Meta::Hide,
             Meta::Show => Meta::Show,
             Meta::Swizzle => Meta::Swizzle,
-            Meta::Root(metas) if depth > 0 => {
-                Meta::Root(metas.iter().map(|meta| meta.clone(depth - 1)).collect())
-            }
-            Meta::Root(_) => Meta::Root(Vec::new()),
             Meta::Option(metas) if depth > 0 => {
                 Meta::Option(metas.iter().map(|meta| meta.clone(depth - 1)).collect())
             }
@@ -150,31 +145,35 @@ impl Meta {
     pub(crate) fn key(&self) -> Option<Key> {
         let control = Self::descend(
             from_ref(self),
-            (None, None, None, None),
+            (None, None, None, None, false),
             false,
             1,
             |state, meta| {
                 ControlFlow::<(), _>::Continue(match meta {
-                    Meta::Name(Name::Plain, value) => {
-                        (state.0.or(Some(value)), state.1, state.2, state.3)
+                    Meta::Verb(_) | Meta::Option(_) => (state.0, state.1, state.2, state.3, true),
+                    Meta::Group(_) => (state.0, state.1, state.2, state.3, false),
+                    Meta::Name(Name::Plain, value) if state.4 => {
+                        (state.0.or(Some(value)), state.1, state.2, state.3, state.4)
                     }
-                    Meta::Name(Name::Short, value) => {
-                        (state.0, state.1.or(Some(value)), state.2, state.3)
+                    Meta::Name(Name::Short, value) if state.4 => {
+                        (state.0, state.1.or(Some(value)), state.2, state.3, state.4)
                     }
-                    Meta::Name(Name::Long, value) => {
-                        (state.0, state.1, state.2.or(Some(value)), state.3)
+                    Meta::Name(Name::Long, value) if state.4 => {
+                        (state.0, state.1, state.2.or(Some(value)), state.3, state.4)
                     }
-                    Meta::Position(value) => (state.0, state.1, state.2, state.3.or(Some(value))),
+                    Meta::Position(value) if state.4 => {
+                        (state.0, state.1, state.2, state.3.or(Some(value)), state.4)
+                    }
                     _ => state,
                 })
             },
             |state, _| ControlFlow::Continue(state),
         );
         match control {
-            ControlFlow::Continue((Some(value), _, _, _)) => Some(Key::Name(value.clone())),
-            ControlFlow::Continue((_, Some(value), _, _)) => Some(Key::Name(value.clone())),
-            ControlFlow::Continue((_, _, Some(value), _)) => Some(Key::Name(value.clone())),
-            ControlFlow::Continue((_, _, _, Some(value))) => Some(Key::Index(*value)),
+            ControlFlow::Continue((Some(value), _, _, _, _)) => Some(Key::Name(value.clone())),
+            ControlFlow::Continue((_, Some(value), _, _, _)) => Some(Key::Name(value.clone())),
+            ControlFlow::Continue((_, _, Some(value), _, _)) => Some(Key::Name(value.clone())),
+            ControlFlow::Continue((_, _, _, Some(value), _)) => Some(Key::Index(*value)),
             _ => None,
         }
     }
@@ -201,9 +200,7 @@ impl Meta {
 
     pub(crate) fn children(&self) -> &[Meta] {
         match self {
-            Meta::Root(metas) | Meta::Option(metas) | Meta::Verb(metas) | Meta::Group(metas) => {
-                metas
-            }
+            Meta::Option(metas) | Meta::Verb(metas) | Meta::Group(metas) => metas,
             _ => &[],
         }
     }

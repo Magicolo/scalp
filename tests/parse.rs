@@ -71,7 +71,7 @@ fn fails_to_parse_invalid_value() -> Result {
         let error = parser
             .parse_with([arguments.0.clone(), arguments.1.clone()], [("", "")])
             .unwrap_err();
-        prove!(matches!(error, Error::FailedToParseOptionValue(value, type_name, _, name) if value == arguments.1 && type_name == Some("natural number".into()) && name == Some(arguments.0.into())))
+        prove!(matches!(error, Error::FailedToParseOptionValue(value, type_name, path) if value == arguments.1 && type_name == Some("natural number".into()) && path == vec!(arguments.0.into())))
     })?;
     Ok(())
 }
@@ -209,7 +209,13 @@ fn parses_enum_value() -> Result {
     );
     assert_eq!(
         parser.parse_with(["-c", "same"], [("", "")]),
-        Err(Error::InvalidOptionValue("same".into(), vec!["-c".into()]))
+        Err(Error::InvalidOptionValue(
+            "same".into(),
+            ["c(amel-case)?", "p(ascal-case)?", "s(nake-case)?"]
+                .map(ToString::to_string)
+                .to_vec(),
+            vec!["-c".into()]
+        ))
     );
     Ok(())
 }

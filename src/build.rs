@@ -169,81 +169,89 @@ impl<S, P> Builder<S, P> {
         )
     }
 
-    fn descend(&mut self, meta: &mut Meta) -> Result<(Indices, RegexSet), Error> {
+    fn descend(&mut self, meta: &mut Meta, options: bool) -> Result<(Indices, RegexSet), Error> {
         let mut indices = Indices::default();
         let mut patterns = Vec::new();
-        let (version, help, metas) = match meta {
-            Meta::Root(metas) | Meta::Verb(metas) | Meta::Group(metas) => {
-                let tuple = self.descend_node(metas, 0, 0, &mut indices, &mut patterns)?;
-                (tuple.0, tuple.1, metas)
+        if let Meta::Option(metas) | Meta::Verb(metas) | Meta::Group(metas) = meta {
+            let (version, help) = self.descend_node(
+                metas,
+                (0, 0),
+                &mut true,
+                &mut indices,
+                &mut patterns,
+                options,
+            )?;
+            if options {
+                if let Some(true) = version {
+                    metas.extend(self.insert_version(&mut indices, true, true)?);
+                }
+                if let Some(true) = help {
+                    metas.extend(self.insert_help(&mut indices, true, true)?);
+                }
+                if version.is_some() || help.is_some() {
+                    Self::insert_key(self.long.clone(), &mut indices, BREAK)?;
+                }
             }
-            Meta::Option(metas) => {
-                self.descend_node(metas, 0, 0, &mut indices, &mut patterns)?;
-                (None, None, metas)
-            }
-            _ => return Ok((indices, RegexSet::new(patterns)?)),
         };
-        if let Some(true) = version {
-            metas.extend(self.insert_version(&mut indices, true, true)?);
-        }
-        if let Some(true) = help {
-            metas.extend(self.insert_help(&mut indices, true, true)?);
-        }
-        if version.is_some() || help.is_some() {
-            Self::insert_key(self.long.clone(), &mut indices, BREAK)?;
-        }
         Ok((indices, RegexSet::new(patterns)?))
     }
 
     fn descend_node(
         &mut self,
         metas: &mut [Meta],
-        mask: usize,
-        shift: u32,
+        (mask, shift): (usize, u32),
+        show: &mut bool,
         indices: &mut Indices,
         patterns: &mut Vec<String>,
+        options: bool,
     ) -> Result<(Option<bool>, Option<bool>), Error> {
         let mut index = 0;
         let mut version = None;
         let mut help = None;
-        let mut hide = 0;
         for i in 0..metas.len() {
             let value = (index << shift) | mask;
             let Some(meta) = metas.get_mut(i) else {
                 break;
             };
             match meta {
-                Meta::Version(_) if hide == 0 => version = version.or(Some(true)),
+                Meta::Version(_) if *show => version = version.or(Some(true)),
                 Meta::Valid(value) => patterns.push(format!("^{value}$")),
-                Meta::Help(_) | Meta::Usage(_) | Meta::Note(_) if hide == 0 => {
+                Meta::Help(_) | Meta::Usage(_) | Meta::Note(_) if *show => {
                     help = help.or(Some(true))
                 }
-                Meta::Hide => hide += 1,
-                Meta::Show => hide = usize::saturating_sub(hide, 1),
+                Meta::Hide => *show = false,
+                Meta::Show => *show = true,
                 Meta::Option(metas) => {
                     self.descend_option(metas, indices, value)?;
                     index += 1;
-                    if hide == 0 {
+                    if *show {
                         help = help.or(Some(true))
                     }
                 }
                 Meta::Verb(metas) => {
-                    self.descend_verb(metas, indices, value)?;
+                    Self::descend_verb(metas, indices, value)?;
                     index += 1;
-                    if hide == 0 {
+                    if *show {
                         help = help.or(Some(true))
                     }
                 }
                 Meta::Group(_) if shift > MAXIMUM => return Err(Error::GroupNestingLimitOverflow),
                 Meta::Group(metas) => {
-                    let tuple =
-                        self.descend_node(metas, value, shift + SHIFT, indices, patterns)?;
+                    let mut show = *show;
+                    let tuple = self.descend_node(
+                        metas,
+                        (value, shift + SHIFT),
+                        &mut show,
+                        indices,
+                        patterns,
+                        options,
+                    )?;
                     version = merge(version, tuple.0, |left, right| left && right);
                     help = merge(help, tuple.1, |left, right| left && right);
                     index += 1;
                 }
-                Meta::Options(options) => {
-                    let option = match *options {
+                Meta::Options(option) if options => {
+                    let option = match *option {
                         Options::Help { short, long } => self.insert_help(indices, short, long)?,
                         Options::Version { short, long } => {
                             self.insert_version(indices, short, long)?
@@ -267,12 +275,7 @@ impl<S, P> Builder<S, P> {
         Ok((version, help))
     }
 
-    fn descend_verb(
-        &mut self,
-        metas: &[Meta],
-        indices: &mut Indices,
-        index: usize,
-    ) -> Result<(), Error> {
+    fn descend_verb(metas: &[Meta], indices: &mut Indices, index: usize) -> Result<(), Error> {
         let mut has = false;
         for i in 0..metas.len() {
             match metas.get(i) {
@@ -651,14 +654,21 @@ impl<S: scope::Node, P> Builder<S, P> {
     pub fn group<Q>(
         self,
         build: impl FnOnce(Builder<scope::Group, At>) -> Builder<scope::Group, Q>,
-    ) -> Builder<S, P::Push<Q>>
+    ) -> Builder<S, P::Push<With<Q>>>
     where
         P: Stack,
     {
         let (scope, old, builder) = self.swap_both(scope::Group::new(), At(()));
-        let (scope, mut builder) = build(builder).swap_scope(scope);
-        builder.scope.push(Meta::from(scope));
-        builder.try_map_parse(|new| Ok(old?.push(new)))
+        let (group, mut builder) = build(builder).swap_scope(scope);
+        let meta = Meta::from(group);
+        builder.scope.push(meta.clone(usize::MAX));
+        builder.try_map_parse(|new| {
+            Ok(old?.push(With {
+                parse: new,
+                set: RegexSet::empty(),
+                meta,
+            }))
+        })
     }
 
     pub fn verb<Q>(
@@ -672,7 +682,7 @@ impl<S: scope::Node, P> Builder<S, P> {
         let position = replace(&mut builder.position, 0);
         let (verb, mut builder) = build(builder).swap_scope(scope);
         let mut meta = Meta::from(verb);
-        let pair = builder.descend(&mut meta);
+        let pair = builder.descend(&mut meta, true);
         builder.position = position;
         builder.scope.push(meta.clone(1));
         builder.try_map_parse(|new| {
@@ -709,7 +719,7 @@ impl<S: scope::Node, P> Builder<S, P> {
         );
         let (option, mut builder) = build(builder.parse::<T>()).swap_scope(scope);
         let mut meta = Meta::from(option);
-        let pair = builder.descend(&mut meta);
+        let pair = builder.descend(&mut meta, false);
         builder.scope.push(meta.clone(1));
         builder.try_map_parse(|new| {
             let (_, set) = pair?;
@@ -798,7 +808,7 @@ impl<P> Builder<scope::Root, P> {
     pub fn build(self) -> Result<Parser<With<Node<P>>>, Error> {
         let (root, mut builder) = self.swap_scope(());
         let mut meta = Meta::from(root);
-        let (indices, set) = builder.descend(&mut meta)?;
+        let (indices, set) = builder.descend(&mut meta, true)?;
         Ok(Parser {
             short: builder.short,
             long: builder.long,

@@ -306,7 +306,7 @@ impl<'a, S: Style + ?Sized + 'a> Helper<'a, S> {
                 |state, _| ControlFlow::Continue(state),
                 |state, meta| match meta {
                     Meta::Require(value) => ControlFlow::Continue(Some(value)),
-                    Meta::Group(_) | Meta::Root(_) => {
+                    Meta::Group(_) => {
                         if let Some(value) = state {
                             width += control(self.write((' ', '<', value, '>')))?;
                         }
@@ -346,12 +346,7 @@ impl<'a, S: Style + ?Sized + 'a> Helper<'a, S> {
                     columns.types += self.style.begin(Item::Type).width();
                     columns.types += self.style.end(Item::Type).width();
                 }
-                Meta::Root(metas)
-                | Meta::Option(metas)
-                | Meta::Verb(metas)
-                | Meta::Group(metas)
-                    if depth > 0 =>
-                {
+                Meta::Option(metas) | Meta::Verb(metas) | Meta::Group(metas) if depth > 0 => {
                     let child = self.columns(metas, depth - 1);
                     columns.short = columns.short.max(child.short);
                     columns.long = columns.long.max(child.long);
@@ -416,7 +411,7 @@ impl<'a, S: Style + ?Sized + 'a> Helper<'a, S> {
                     )?;
                     helper.write_line("")?;
                 }
-                Meta::Root(metas) => {
+                Meta::Group(metas) if depth == 0 => {
                     helper.write_header(root, metas)?;
                     helper.node(root, metas, depth + 1)?;
                 }
@@ -731,9 +726,7 @@ fn join(meta: &Meta, depth: usize, find: impl Fn(&Meta) -> Option<Cow<str>>) -> 
         find: impl Fn(&Meta) -> Option<Cow<str>> + Copy,
     ) -> fmt::Result {
         match meta {
-            Meta::Root(metas) | Meta::Option(metas) | Meta::Verb(metas) | Meta::Group(metas)
-                if depth > 0 =>
-            {
+            Meta::Option(metas) | Meta::Verb(metas) | Meta::Group(metas) if depth > 0 => {
                 for meta in metas {
                     descend(meta, depth - 1, buffer, find)?;
                 }

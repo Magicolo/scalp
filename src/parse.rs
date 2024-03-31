@@ -200,8 +200,6 @@ impl<'a> Context<'a> {
     fn invalid_argument(&self, key: Cow<'static, str>) -> Error {
         Error::InvalidArgument(
             key,
-            self.path.clone(),
-            self.meta.and_then(Meta::key),
             self.set
                 .patterns()
                 .iter()
@@ -212,6 +210,7 @@ impl<'a> Context<'a> {
                         .to_string()
                 })
                 .collect(),
+            self.path.clone(),
         )
     }
 
@@ -220,11 +219,17 @@ impl<'a> Context<'a> {
     }
 
     fn missing_required(&self) -> Error {
-        Error::MissingRequiredValue(
-            self.path.clone(),
-            self.meta.and_then(Meta::key),
-            self.meta.and_then(Meta::require),
-        )
+        let path = self.path.clone();
+        match self.meta {
+            Some(Meta::Option(_)) => {
+                Error::MissingRequiredOption(path, self.meta.and_then(Meta::key))
+            }
+            _ => Error::MissingRequiredValue(path, self.meta.and_then(Meta::require)),
+        }
+    }
+
+    fn duplicate_verb(&self) -> Error {
+        Error::DuplicateVerb(self.path.clone())
     }
 
     fn duplicate_option(&self) -> Error {
@@ -232,16 +237,19 @@ impl<'a> Context<'a> {
     }
 
     fn invalid_option(&self, value: Cow<'static, str>) -> Error {
-        Error::InvalidOptionValue(value, self.path.clone())
+        Error::InvalidOptionValue(
+            value,
+            self.set
+                .patterns()
+                .iter()
+                .map(|pattern| pattern.trim_matches(['$', '^']).to_string())
+                .collect(),
+            self.path.clone(),
+        )
     }
 
     fn failed_parse(&self, value: Cow<'static, str>) -> Error {
-        Error::FailedToParseOptionValue(
-            value,
-            self.type_name(),
-            self.path.clone(),
-            self.meta.and_then(Meta::key),
-        )
+        Error::FailedToParseOptionValue(value, self.type_name(), self.path.clone())
     }
 
     fn restore(&mut self, key: Cow<'static, str>) {
@@ -398,7 +406,7 @@ impl<P: Parse> Parse for Node<P> {
 
     fn parse(&self, state: Self::State, mut context: Context) -> Result<Self::State, Error> {
         if state.is_some() {
-            return Err(Error::DuplicateNode);
+            return Err(context.duplicate_verb());
         }
 
         let mut outer = self.parse.initialize(context.own())?;

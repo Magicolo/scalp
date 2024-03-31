@@ -10,7 +10,8 @@ pub enum Error {
     License(Option<String>),
 
     MissingOptionValue(Option<Cow<'static, str>>, Vec<Key>),
-    MissingRequiredValue(Vec<Key>, Option<Key>, Option<Cow<'static, str>>),
+    MissingRequiredOption(Vec<Key>, Option<Key>),
+    MissingRequiredValue(Vec<Key>, Option<Cow<'static, str>>),
     DuplicateOption(Vec<Key>),
     UnrecognizedArgument(Cow<'static, str>, Vec<(Cow<'static, str>, usize)>),
     ExcessArguments(VecDeque<Cow<'static, str>>),
@@ -25,13 +26,8 @@ pub enum Error {
         Vec<Key>,
         Option<Key>,
     ),
-    FailedToParseOptionValue(
-        Cow<'static, str>,
-        Option<Cow<'static, str>>,
-        Vec<Key>,
-        Option<Key>,
-    ),
-    DuplicateNode,
+    FailedToParseOptionValue(Cow<'static, str>, Option<Cow<'static, str>>, Vec<Key>),
+    DuplicateVerb(Vec<Key>),
     GroupNestingLimitOverflow,
     InvalidIndex(usize),
     MissingIndex,
@@ -46,8 +42,8 @@ pub enum Error {
     InvalidSwizzleOption(char),
     InvalidOptionType(Cow<'static, str>),
     InvalidInitialization,
-    InvalidOptionValue(Cow<'static, str>, Vec<Key>),
-    InvalidArgument(Cow<'static, str>, Vec<Key>, Option<Key>, Vec<String>),
+    InvalidOptionValue(Cow<'static, str>, Vec<String>, Vec<Key>),
+    InvalidArgument(Cow<'static, str>, Vec<String>, Vec<Key>),
 }
 
 impl error::Error for Error {}
@@ -70,11 +66,11 @@ impl fmt::Display for Error {
             Error::License(Some(author)) => write!(f, "{author}")?,
             Error::License(None) => write!(f, "Missing license.")?,
 
-            Error::InvalidArgument(argument, path, name, patterns) => {
+            Error::InvalidArgument(argument, patterns, path) => {
                 write!(f, "Invalid argument '{argument}'")?;
-                write_join(f, " for ", "", " ", path.iter().chain(name))?;
+                write_join(f, " for '", "'", " ", path)?;
                 write!(f, ".")?;
-                write_join(f, " Argument must match '", "'.", " | ", patterns)?;
+                write_join(f, " Argument must match pattern '", "'.", " | ", patterns)?;
             }
             Error::UnrecognizedArgument(argument, suggestions) => {
                 write!(f, "Unrecognized argument '{argument}'.")?;
@@ -99,20 +95,30 @@ impl fmt::Display for Error {
                 if let Some(type_name) = type_name {
                     write!(f, " of type '{type_name}'")?;
                 }
-                write_join(f, " for option ", "", " ", path.iter())?;
+                write_join(f, " for option '", "'", " ", path.iter())?;
                 write!(f, ".")?;
             }
             Error::DuplicateOption(path) => {
                 write!(f, "Duplicate option")?;
-                write_join(f, " ", "", " ", path.iter())?;
+                write_join(f, " '", "'", " ", path.iter())?;
                 write!(f, ".")?;
             }
-            Error::MissingRequiredValue(path, name, type_name) => {
+            Error::DuplicateVerb(path) => {
+                write!(f, "Duplicate verb")?;
+                write_join(f, " '", "'", " ", path)?;
+                write!(f, ".")?;
+            }
+            Error::MissingRequiredOption(path, name) => {
+                write!(f, "Missing required option")?;
+                write_join(f, " '", "'", " ", path.iter().chain(name))?;
+                write!(f, ".")?;
+            }
+            Error::MissingRequiredValue(path, type_name) => {
                 write!(f, "Missing required value")?;
                 if let Some(type_name) = type_name {
                     write!(f, " of type '{type_name}'")?;
                 }
-                write_join(f, " for ", "", " ", path.iter().chain(name))?;
+                write_join(f, " at '", "'", " ", path)?;
                 write!(f, ".")?;
             }
             Error::FailedToParseEnvironmentVariable(key, value, type_name, path, name) => {
@@ -123,15 +129,15 @@ impl fmt::Display for Error {
                 if let Some(type_name) = type_name {
                     write!(f, " as type '{type_name}'")?;
                 }
-                write_join(f, " for option ", "", " ", path.iter().chain(name))?;
+                write_join(f, " for option '", "'", " ", path.iter().chain(name))?;
                 write!(f, ".")?;
             }
-            Error::FailedToParseOptionValue(value, type_name, path, name) => {
+            Error::FailedToParseOptionValue(value, type_name, path) => {
                 write!(f, "Failed to parse value '{value}'")?;
                 if let Some(type_name) = type_name {
                     write!(f, " as type '{type_name}'")?;
                 }
-                write_join(f, " for option ", "", " ", path.iter().chain(name))?;
+                write_join(f, " for option '", "'", " ", path)?;
                 write!(f, ".")?;
             }
             Error::InvalidPrefix(short, long) => write!(f, "Invalid prefix '{short}' or '{long}'. A valid prefix is non-empty, contains only non-alpha-numeric characters and differs from the other prefix.")?,
@@ -141,13 +147,13 @@ impl fmt::Display for Error {
             Error::InvalidVerbName(name) => write!(f, "Invalid verb name '{name}'. A valid verb name is non-empty and contains only ascii characters.")?,
             Error::InvalidOptionName(name) => write!(f, "Invalid option name '{name}'. A valid option name is non-empty and contains only ascii characters.")?,
             Error::InvalidOptionType(type_name) => write!(f, "Invalid option type '{type_name}'.")?,
-            Error::InvalidOptionValue(value, path) => {
+            Error::InvalidOptionValue(value, patterns, path) => {
                 write!(f, "Invalid value '{value}'")?;
-                write_join(f, " for option ", "", " ", path.iter())?;
+                write_join(f, " for option '", "'", " ", path)?;
                 write!(f, ".")?;
+                write_join(f, " Value must match pattern '", "'.", " | ", patterns)?;
             }
             Error::InvalidParseState => write!(f, "Invalid parse state.")?,
-            Error::DuplicateNode => write!(f, "Duplicate node.")?,
             Error::GroupNestingLimitOverflow => write!(f, "Group nesting limit overflow.")?,
             Error::MissingOptionNameOrPosition => write!(f, "Missing name or position for option.")?,
             Error::MissingVerbName => write!(f, "Missing name for verb.")?,

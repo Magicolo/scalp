@@ -11,7 +11,7 @@ pub trait Version: Scope {}
 pub trait Node: Scope {}
 
 macro_rules! scope {
-    ($name: ident) => {
+    ($name: ident, $meta: ident) => {
         #[derive(Default)]
         pub struct $name(Vec<Meta>);
 
@@ -25,7 +25,7 @@ macro_rules! scope {
 
         impl From<$name> for Meta {
             fn from(scope: $name) -> Self {
-                Meta::$name(scope.0)
+                Meta::$meta(scope.0)
             }
         }
 
@@ -50,10 +50,10 @@ macro_rules! scope {
     };
 }
 
-scope!(Root);
-scope!(Option);
-scope!(Group);
-scope!(Verb);
+scope!(Root, Group);
+scope!(Option, Option);
+scope!(Group, Group);
+scope!(Verb, Verb);
 
 impl Version for Root {}
 impl Version for Verb {}
