@@ -270,13 +270,9 @@ impl<'a, S: Style + ?Sized + 'a> Helper<'a, S> {
         })?;
         if width == 0 {
             width += self.write(prefix)?;
-            width += self.write("Usage: ")?;
-            let mut has = false;
+            width += self.write("Usage:")?;
             for key in root.key().as_ref().into_iter().chain(self.path) {
-                if replace(&mut has, true) {
-                    width += self.write(" ")?;
-                }
-                width += self.write(key)?;
+                width += self.write((' ', key))?;
             }
 
             match Meta::descend(
