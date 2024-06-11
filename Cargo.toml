@@ -14,7 +14,7 @@ build = "build.rs"
 rust-version = "1.70.0"
 
 [dependencies]
-termion = "3.0.0"
+termion = "4.0.1"
 orn = "0.4.2"
 regex = "1.10.4"
 
