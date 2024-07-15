@@ -106,7 +106,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         })
         .note("A note.")
         .build()?
-        .parse()?;
+        .parse_with(["--help"], [("", "")])?;
     println!("{:?}", root);
     Ok(())
 }

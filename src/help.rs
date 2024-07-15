@@ -407,7 +407,7 @@ impl<'a, S: Style + ?Sized + 'a> Helper<'a, S> {
                     )?;
                     helper.write_line("")?;
                 }
-                Meta::Group(metas) if depth == 0 => {
+                Meta::Group(metas) | Meta::Verb(metas) if depth == 0 => {
                     helper.write_header(root, metas)?;
                     helper.node(root, metas, depth + 1)?;
                 }
@@ -427,10 +427,6 @@ impl<'a, S: Style + ?Sized + 'a> Helper<'a, S> {
                     } else {
                         helper.node(root, metas, depth + 1)?;
                     }
-                }
-                Meta::Verb(metas) if depth == 0 => {
-                    helper.write_header(root, metas)?;
-                    helper.node(root, metas, depth + 1)?;
                 }
                 Meta::Verb(metas) => {
                     helper.indentation()?;

@@ -55,6 +55,7 @@ pub struct With<P> {
     pub(crate) meta: Meta,
 }
 
+#[derive(Default)]
 pub struct Value<T> {
     pub(crate) tag: Option<Cow<'static, str>>,
     pub(crate) _marker: PhantomData<T>,

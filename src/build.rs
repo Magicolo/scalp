@@ -27,6 +27,7 @@ pub struct Builder<S, P = At<()>> {
     position: usize,
 }
 
+#[derive(Default, Clone, Copy)]
 pub struct Unit;
 
 pub trait Flag {}
@@ -705,18 +706,7 @@ impl<S: scope::Node, P> Builder<S, P> {
     where
         P: Stack,
     {
-        let tag = self.tag.clone();
-        let (scope, old, builder) = self.swap_both(
-            scope::Option::new(),
-            Value {
-                tag: if TypeId::of::<T>() == TypeId::of::<bool>() {
-                    Some(tag)
-                } else {
-                    None
-                },
-                _marker: PhantomData,
-            },
-        );
+        let (scope, old, builder) = self.swap_both(scope::Option::new(), Value::default());
         let (option, mut builder) = build(builder.parse::<T>()).swap_scope(scope);
         let mut meta = Meta::from(option);
         let pair = builder.descend(&mut meta, false);
@@ -762,10 +752,9 @@ impl Parser<()> {
 
 impl Builder<scope::Root> {
     fn new() -> Self {
-        let case = Case::Kebab { upper: false };
         Self {
-            case,
-            tag: case.convert("true").collect(),
+            case: Case::Kebab { upper: false },
+            tag: Cow::Borrowed("true"),
             short: Cow::Borrowed("-"),
             long: Cow::Borrowed("--"),
             buffer: String::new(),
@@ -901,9 +890,10 @@ impl<P> Builder<scope::Verb, P> {
 
 impl Builder<scope::Option, Value<Unit>> {
     pub fn parse<T: FromStr + 'static>(self) -> Builder<scope::Option, Value<T>> {
+        let tag = self.tag.clone();
         self.parse_with(
             if TypeId::of::<T>() == TypeId::of::<bool>() {
-                Some("true")
+                Some(tag)
             } else {
                 None
             },
