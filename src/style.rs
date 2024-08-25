@@ -2,6 +2,7 @@ use self::color::*;
 use std::{
     borrow::Cow,
     fmt::{self, Display},
+    ops::Deref,
 };
 use termion::{
     color::{Bg, Color, Fg, Rgb},
@@ -221,8 +222,14 @@ format!(Italic, 0);
 format!(Underline, 0);
 
 pub trait Style {
-    fn indent(&self) -> usize;
-    fn width(&self) -> usize;
+    #[inline]
+    fn indent(&self) -> usize {
+        2
+    }
+    #[inline]
+    fn width(&self) -> usize {
+        96
+    }
     fn begin(&self, item: Item) -> &dyn Format;
     fn end(&self, item: Item) -> &dyn Format;
 }
@@ -232,12 +239,30 @@ macro_rules! dynamic {
         &[$(&$value as &dyn Format),*]
     };
 }
-impl Style for Termion {
+
+impl<S: Deref + ?Sized> Style for S
+where
+    S::Target: Style,
+{
     #[inline]
     fn indent(&self) -> usize {
-        2
+        self.deref().indent()
     }
+    #[inline]
+    fn width(&self) -> usize {
+        self.deref().width()
+    }
+    #[inline]
+    fn begin(&self, item: Item) -> &dyn Format {
+        self.deref().begin(item)
+    }
+    #[inline]
+    fn end(&self, item: Item) -> &dyn Format {
+        self.deref().end(item)
+    }
+}
 
+impl Style for Termion {
     #[inline]
     fn width(&self) -> usize {
         terminal_size().map_or(64, |pair| pair.0 as usize - 32)
@@ -289,16 +314,6 @@ impl Style for Termion {
 }
 
 impl Style for Plain {
-    #[inline]
-    fn indent(&self) -> usize {
-        2
-    }
-
-    #[inline]
-    fn width(&self) -> usize {
-        96
-    }
-
     #[inline]
     fn begin(&self, item: Item) -> &dyn Format {
         const BAR: char = '~';

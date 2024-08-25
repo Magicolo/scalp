@@ -1,17 +1,17 @@
-use crate::parse::Key;
+use crate::{parse::Key, style::Style};
 use core::num::NonZeroUsize;
-use std::{borrow::Cow, iter::from_fn, ops::ControlFlow, slice::from_ref};
+use std::{borrow::Cow, iter::from_fn, ops::ControlFlow, slice::from_ref, sync::Arc};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Name {
-    Plain,
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Prefix {
+    None,
     Short,
     Long,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum Meta {
-    Name(Name, Cow<'static, str>),
+    Name(Prefix, Cow<'static, str>),
     Position(usize),
     Version(Cow<'static, str>),
     License(Cow<'static, str>, Cow<'static, str>),
@@ -29,6 +29,8 @@ pub enum Meta {
     Many(Option<NonZeroUsize>),
     Default(Cow<'static, str>),
     Environment(Cow<'static, str>),
+    Prefix(char),
+    Style(Arc<dyn Style>),
     Show,
     Hide,
     Swizzle,
@@ -85,7 +87,7 @@ impl Options {
 impl Meta {
     pub fn clone(&self, depth: usize) -> Self {
         match self {
-            Meta::Name(name, value) => Meta::Name(*name, value.clone()),
+            Meta::Name(prefix, value) => Meta::Name(*prefix, value.clone()),
             Meta::Position(value) => Meta::Position(*value),
             Meta::Version(value) => Meta::Version(value.clone()),
             Meta::License(name, content) => Meta::License(name.clone(), content.clone()),
@@ -103,6 +105,8 @@ impl Meta {
             Meta::Default(value) => Meta::Default(value.clone()),
             Meta::Environment(value) => Meta::Environment(value.clone()),
             Meta::Valid(value) => Meta::Valid(value.clone()),
+            Meta::Prefix(prefix) => Meta::Prefix(*prefix),
+            Meta::Style(style) => Meta::Style(style.clone()),
             Meta::Hide => Meta::Hide,
             Meta::Show => Meta::Show,
             Meta::Swizzle => Meta::Swizzle,
@@ -119,6 +123,24 @@ impl Meta {
                 Meta::Group(metas.iter().map(|meta| meta.clone(depth - 1)).collect())
             }
             Meta::Group(_) => Meta::Group(Vec::new()),
+        }
+    }
+
+    pub(crate) fn style(metas: &[Meta]) -> Option<&dyn Style> {
+        let control = Self::descend(
+            metas,
+            None,
+            false,
+            0,
+            |state, meta| match meta {
+                Meta::Style(style) => ControlFlow::<(), _>::Continue(Some(style)),
+                _ => ControlFlow::Continue(state),
+            },
+            |state, _| ControlFlow::Continue(state),
+        );
+        match control {
+            ControlFlow::Continue(style) => Some(style?),
+            ControlFlow::Break(_) => None,
         }
     }
 
@@ -152,13 +174,13 @@ impl Meta {
                 ControlFlow::<(), _>::Continue(match meta {
                     Meta::Verb(_) | Meta::Option(_) => (state.0, state.1, state.2, state.3, true),
                     Meta::Group(_) => (state.0, state.1, state.2, state.3, false),
-                    Meta::Name(Name::Plain, value) if state.4 => {
+                    Meta::Name(Prefix::None, value) if state.4 => {
                         (state.0.or(Some(value)), state.1, state.2, state.3, state.4)
                     }
-                    Meta::Name(Name::Short, value) if state.4 => {
+                    Meta::Name(Prefix::Short, value) if state.4 => {
                         (state.0, state.1.or(Some(value)), state.2, state.3, state.4)
                     }
-                    Meta::Name(Name::Long, value) if state.4 => {
+                    Meta::Name(Prefix::Long, value) if state.4 => {
                         (state.0, state.1, state.2.or(Some(value)), state.3, state.4)
                     }
                     Meta::Position(value) if state.4 => {

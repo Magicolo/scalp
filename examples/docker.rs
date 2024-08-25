@@ -269,7 +269,7 @@ fn global_options(builder: Builder<scope::Group>) -> Builder<scope::Group, impl 
 }
 
 fn main() -> Result<(), Error> {
-    let parser = Parser::builder()
+    let parser = Parser::verb(|root| root
         .name(env!("CARGO_BIN_NAME").trim())
         .version(env!("CARGO_PKG_VERSION").trim())
         .summary("A self-sufficient runtime for containers.")
@@ -286,8 +286,7 @@ fn main() -> Result<(), Error> {
         .help("Run 'docker COMMAND --help' for more information on a command.")
         .line()
         .note("For more help on how to use Docker, head to https://docs.docker.com/go/guides/")
-        .map(|(command, global)| Docker { command, global })
-        .build()?;
+        .map(|(command, global)| Docker { command, global }))?;
     let arguments = [
         "--config", "boba", "--debug", "false", "-H", "jango", "--host", "karl", "kill",
     ];

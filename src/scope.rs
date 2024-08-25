@@ -7,16 +7,15 @@ pub trait Scope: Into<Meta> + Extend<Meta> + DerefMut<Target = Vec<Meta>> {
     }
 }
 
-pub trait Version: Scope {}
 pub trait Node: Scope {}
 
 macro_rules! scope {
-    ($name: ident, $meta: ident) => {
+    ($visibility: vis, $name: ident, $meta: ident) => {
         #[derive(Default)]
-        pub struct $name(Vec<Meta>);
+        $visibility struct $name(Vec<Meta>);
 
         impl $name {
-            pub const fn new() -> Self {
+            $visibility const fn new() -> Self {
                 Self(Vec::new())
             }
         }
@@ -50,13 +49,11 @@ macro_rules! scope {
     };
 }
 
-scope!(Root, Group);
-scope!(Option, Option);
-scope!(Group, Group);
-scope!(Verb, Verb);
+scope!(pub(crate), Root, Group);
+scope!(pub, Option, Option);
+scope!(pub, Group, Group);
+scope!(pub, Verb, Verb);
 
-impl Version for Root {}
-impl Version for Verb {}
 impl Node for Root {}
 impl Node for Group {}
 impl Node for Verb {}

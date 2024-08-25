@@ -1,6 +1,6 @@
 use crate::parse::Key;
 use core::fmt;
-use std::{borrow::Cow, collections::VecDeque, error, mem::replace};
+use std::{borrow::Cow, error, mem::replace};
 
 #[derive(Clone, PartialEq)]
 pub enum Error {
@@ -14,7 +14,7 @@ pub enum Error {
     MissingRequiredValue(Vec<Key>, Option<Cow<'static, str>>),
     DuplicateOption(Vec<Key>),
     UnrecognizedArgument(Cow<'static, str>, Vec<(Cow<'static, str>, usize)>),
-    ExcessArguments(VecDeque<Cow<'static, str>>),
+    ExcessArguments(Vec<Cow<'static, str>>),
     DuplicateName(String),
     Format(fmt::Error),
     Regex(regex::Error),
@@ -37,13 +37,21 @@ pub enum Error {
     MissingOptionNameOrPosition,
     MissingVerbName,
     FailedToParseArguments,
-    InvalidPrefix(Cow<'static, str>, Cow<'static, str>),
+    InvalidPrefix(char),
     MissingShortOptionNameForSwizzling,
-    InvalidSwizzleOption(char),
+    InvalidSwizzleOption(Cow<'static, str>),
     InvalidOptionType(Cow<'static, str>),
     InvalidInitialization,
     InvalidOptionValue(Cow<'static, str>, Vec<String>, Vec<Key>),
     InvalidArgument(Cow<'static, str>, Vec<String>, Vec<Key>),
+    
+    InvalidShortOption(Cow<'static, str>),
+    InvalidLongOption(Cow<'static, str>),
+    EmptyShortOption,
+    EmptyLongOption,
+    InvalidShortVerb(Cow<'static, str>),
+    InvalidLongVerb(Cow<'static, str>),
+    EmptyArgument,
 }
 
 impl error::Error for Error {}
@@ -140,7 +148,7 @@ impl fmt::Display for Error {
                 write_join(f, " for option '", "'", " ", path)?;
                 write!(f, ".")?;
             }
-            Error::InvalidPrefix(short, long) => write!(f, "Invalid prefix '{short}' or '{long}'. A valid prefix is non-empty, contains only non-alpha-numeric characters and differs from the other prefix.")?,
+            Error::InvalidPrefix(prefix) => write!(f, "Invalid prefix '{prefix}'. A valid prefix is a non-whitespace, non-control, non-alpha-numeric character.")?,
             Error::DuplicateName(name) => write!(f, "Duplicate name '{name}'.")?,
             Error::InvalidIndex(index) => write!(f, "Invalid index '{index}'.")?,
             Error::MissingIndex => write!(f, "Missing index.")?,
@@ -165,6 +173,14 @@ impl fmt::Display for Error {
             Error::Format(error) => error.fmt(f)?,
             Error::Regex(error) => error.fmt(f)?,
             Error::Other(error) => error.fmt(f)?,
+
+            Error::InvalidShortOption(key) => todo!(),
+            Error::InvalidLongOption(key) => todo!(),
+            Error::EmptyShortOption => todo!(),
+            Error::EmptyLongOption => todo!(),
+            Error::InvalidShortVerb(key) => todo!(),
+            Error::InvalidLongVerb(key) => todo!(),
+            Error::EmptyArgument => todo!(),
         }
         Ok(())
     }

@@ -20,10 +20,13 @@ pub enum Case {
 
 impl Case {
     #[inline]
-    pub fn convert<'a>(&self, source: &'a str) -> impl Iterator<Item = char> + 'a {
+    pub fn convert<'a>(
+        &self,
+        source: impl IntoIterator<Item = char>,
+    ) -> impl Iterator<Item = char> {
         use orn::or8::*;
         match self {
-            Case::Same => Iterator::T0(source.chars()),
+            Case::Same => Iterator::T0(source.into_iter()),
             Case::Lower => Iterator::T1(Self::lower(source)),
             Case::Upper => Iterator::T2(Self::upper(source)),
             Case::Pascal => Iterator::T3(Self::pascal(source)),
@@ -38,8 +41,8 @@ impl Case {
     }
 
     #[inline]
-    pub fn upper(source: &str) -> impl Iterator<Item = char> + '_ {
-        source.chars().filter_map(|letter| {
+    pub fn upper(source: impl IntoIterator<Item = char>) -> impl Iterator<Item = char> {
+        source.into_iter().filter_map(|letter| {
             if is_separator(letter) {
                 None
             } else {
@@ -49,8 +52,8 @@ impl Case {
     }
 
     #[inline]
-    pub fn lower(source: &str) -> impl Iterator<Item = char> + '_ {
-        source.chars().filter_map(|letter| {
+    pub fn lower(source: impl IntoIterator<Item = char>) -> impl Iterator<Item = char> {
+        source.into_iter().filter_map(|letter| {
             if is_separator(letter) {
                 None
             } else {
@@ -60,22 +63,28 @@ impl Case {
     }
 
     #[inline]
-    pub fn pascal(source: &str) -> impl Iterator<Item = char> + '_ {
+    pub fn pascal(source: impl IntoIterator<Item = char>) -> impl Iterator<Item = char> {
         continuous(source, true)
     }
 
     #[inline]
-    pub fn camel(source: &str) -> impl Iterator<Item = char> + '_ {
+    pub fn camel(source: impl IntoIterator<Item = char>) -> impl Iterator<Item = char> {
         continuous(source, false)
     }
 
     #[inline]
-    pub fn snake(source: &str, upper: bool) -> impl Iterator<Item = char> + '_ {
+    pub fn snake(
+        source: impl IntoIterator<Item = char>,
+        upper: bool,
+    ) -> impl Iterator<Item = char> {
         separated(source, '_', !upper)
     }
 
     #[inline]
-    pub fn kebab(source: &str, upper: bool) -> impl Iterator<Item = char> + '_ {
+    pub fn kebab(
+        source: impl IntoIterator<Item = char>,
+        upper: bool,
+    ) -> impl Iterator<Item = char> {
         separated(source, '-', !upper)
     }
 }
@@ -86,10 +95,13 @@ const fn is_separator(letter: char) -> bool {
 }
 
 #[inline]
-fn continuous(source: &str, mut first: bool) -> impl Iterator<Item = char> + '_ {
+fn continuous(
+    source: impl IntoIterator<Item = char>,
+    mut first: bool,
+) -> impl Iterator<Item = char> {
     let mut upper = first;
     let mut last = true;
-    source.chars().flat_map(move |letter| {
+    source.into_iter().flat_map(move |letter| {
         let mut result = None;
         if letter.is_ascii_alphabetic() {
             if upper {
@@ -113,11 +125,15 @@ fn continuous(source: &str, mut first: bool) -> impl Iterator<Item = char> + '_ 
 }
 
 #[inline]
-fn separated(source: &str, separator: char, lower: bool) -> impl Iterator<Item = char> + '_ {
+fn separated(
+    source: impl IntoIterator<Item = char>,
+    separator: char,
+    lower: bool,
+) -> impl Iterator<Item = char> {
     let mut separate = false;
     let mut first = false;
     let mut last = false;
-    source.chars().flat_map(move |letter| {
+    source.into_iter().flat_map(move |letter| {
         let mut results = [None, None];
         if letter.is_ascii_uppercase() {
             if separate || last {
@@ -164,7 +180,7 @@ mod tests {
 
     #[test]
     fn pascal() -> Result<(), fmt::Error> {
-        let convert = |value| Case::pascal(value).collect::<String>();
+        let convert = |value: &str| Case::pascal(value.chars()).collect::<String>();
         assert_eq!(convert("BobaFett"), "BobaFett");
         assert_eq!(convert("bobaFett"), "BobaFett");
         assert_eq!(convert("boba fett"), "BobaFett");
@@ -184,7 +200,7 @@ mod tests {
 
     #[test]
     fn camel() -> Result<(), fmt::Error> {
-        let convert = |value| Case::camel(value).collect::<String>();
+        let convert = |value: &str| Case::camel(value.chars()).collect::<String>();
         assert_eq!(convert("BobaFett"), "bobaFett");
         assert_eq!(convert("bobaFett"), "bobaFett");
         assert_eq!(convert("boba fett"), "bobaFett");
@@ -204,7 +220,7 @@ mod tests {
 
     #[test]
     fn snake() -> Result<(), fmt::Error> {
-        let convert = |value| Case::snake(value, false).collect::<String>();
+        let convert = |value: &str| Case::snake(value.chars(), false).collect::<String>();
         assert_eq!(convert("BobaFett"), "boba_fett");
         assert_eq!(convert("bobaFett"), "boba_fett");
         assert_eq!(convert("boba fett"), "boba_fett");
@@ -224,7 +240,7 @@ mod tests {
 
     #[test]
     fn kebab() -> Result<(), fmt::Error> {
-        let convert = |value| Case::kebab(value, false).collect::<String>();
+        let convert = |value: &str| Case::kebab(value.chars(), false).collect::<String>();
         assert_eq!(convert("BobaFett"), "boba-fett");
         assert_eq!(convert("bobaFett"), "boba-fett");
         assert_eq!(convert("boba fett"), "boba-fett");
@@ -244,7 +260,7 @@ mod tests {
 
     #[test]
     fn upper() -> Result<(), fmt::Error> {
-        let convert = |value| Case::upper(value).collect::<String>();
+        let convert = |value: &str| Case::upper(value.chars()).collect::<String>();
         assert_eq!(convert("BobaFett"), "BOBAFETT");
         assert_eq!(convert("bobaFett"), "BOBAFETT");
         assert_eq!(convert("boba fett"), "BOBAFETT");
@@ -264,7 +280,7 @@ mod tests {
 
     #[test]
     fn upper_snake() -> Result<(), fmt::Error> {
-        let convert = |value| Case::snake(value, true).collect::<String>();
+        let convert = |value: &str| Case::snake(value.chars(), true).collect::<String>();
         assert_eq!(convert("BobaFett"), "BOBA_FETT");
         assert_eq!(convert("bobaFett"), "BOBA_FETT");
         assert_eq!(convert("boba fett"), "BOBA_FETT");
@@ -284,7 +300,7 @@ mod tests {
 
     #[test]
     fn upper_kebab() -> Result<(), fmt::Error> {
-        let convert = |value| Case::kebab(value, true).collect::<String>();
+        let convert = |value: &str| Case::kebab(value.chars(), true).collect::<String>();
         assert_eq!(convert("BobaFett"), "BOBA-FETT");
         assert_eq!(convert("bobaFett"), "BOBA-FETT");
         assert_eq!(convert("boba fett"), "BOBA-FETT");

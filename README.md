@@ -39,7 +39,7 @@ fn main() -> Result<(), Error> {
         command: Command,
     }
 
-    let parser = Parser::builder()
+    let parser = Parser::verb(|root| root
         .case(Case::Kebab { upper: false })
         .option(|option| option.name("d").name("debug").help("Debug mode.").default(false))
         .option(|option| option.name("y").name("yes").swizzle().default(false))
@@ -59,7 +59,7 @@ fn main() -> Result<(), Error> {
         .map(|(debug, yes, force, recurse, command)| Root { debug, yes, recurse, force, command })
         .line()
         .note("Documentation: https://docs.rs/scalp/latest/scalp/")
-        .build()?;
+    )?;
 
     let root = parser.parse_with(["--debug", "-fyr", "run", "./", "-s", "./settings.json"], [("", "")])?;
     assert!(root.debug);

@@ -56,7 +56,7 @@ const MAXIMUM: u32 = usize::BITS - 14;
 #[macro_export]
 macro_rules! header {
     () => {
-        |builder: $crate::Builder<$crate::scope::Root, _>| $crate::header!(builder)
+        |builder: $crate::Builder<$crate::scope::Verb, _>| $crate::header!(builder)
     };
     ($builder: expr) => {
         $builder.pipe(|mut builder| {
