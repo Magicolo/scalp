@@ -44,15 +44,20 @@ fn empty_parser_with_help_builds() -> Result {
 #[test]
 fn missing_option_value_with_short() -> Result {
     (prefix(), regex!("[a-zA-Z]")).check(COUNT, |(prefix, name)| {
-        let parser = Parser::verb(|verb| 
+        let parser = Parser::verb(|verb| {
             verb.case(Case::Same)
                 .prefix(*prefix)
                 .option::<usize, _>(|option| option.name(name.clone()))
-        )
+        })
         .unwrap();
-        let argument = format!("{prefix}{name}");
-        let error = parser.parse_with([argument.clone()], [("", "")]).unwrap_err();
-        prove!(matches!(error, Error::MissingOptionValue(type_name, path) if type_name == Some("natural number".into()) && path == vec![argument.into()]))
+        let Err(Error::MissingOptionValue(type_name, path)) =
+            parser.parse_with([format!("{prefix}{name}")], [("", "")])
+        else {
+            panic!()
+        };
+        assert_eq!(type_name, Some("natural number".into()));
+        assert_eq!(path, vec!(name.clone().into()));
+        Ok::<(), ()>(())
     })?;
     Ok(())
 }
@@ -60,15 +65,20 @@ fn missing_option_value_with_short() -> Result {
 #[test]
 fn missing_option_value_with_long() -> Result {
     (prefix(), regex!("[a-zA-Z]{2,}")).check(COUNT, |(prefix, name)| {
-        let parser = Parser::verb(|verb| 
+        let parser = Parser::verb(|verb| {
             verb.case(Case::Same)
                 .prefix(*prefix)
                 .option::<isize, _>(|option| option.name(name.clone()))
-        )
+        })
         .unwrap();
-        let argument = format!("{prefix}{prefix}{name}");
-        let error = parser.parse_with([argument.clone()], [("", "")]).unwrap_err();
-        prove!(matches!(error, Error::MissingOptionValue(type_name, path) if type_name == Some("integer number".into()) && path == vec![argument.into()]))
+        let Err(Error::MissingOptionValue(type_name, path)) =
+            parser.parse_with([format!("{prefix}{prefix}{name}")], [("", "")])
+        else {
+            panic!()
+        };
+        assert_eq!(type_name, Some("integer number".into()));
+        assert_eq!(path, vec!(name.clone().into()));
+        Ok::<(), ()>(())
     })?;
     Ok(())
 }
@@ -76,16 +86,21 @@ fn missing_option_value_with_long() -> Result {
 #[test]
 fn fails_to_parse_invalid_value() -> Result {
     (regex!("[a-zA-Z]{2,}"), ..-1).check(COUNT, |(name, value)| {
-        let parser = Parser::verb(|verb| 
+        let parser = Parser::verb(|verb| {
             verb.case(Case::Same)
                 .option::<usize, _>(|option| option.name(name.clone()))
-        )
+        })
         .unwrap();
-        let arguments = (format!("--{name}"), format!("{value}"));
-        let error = parser
-            .parse_with([arguments.0.clone(), arguments.1.clone()], [("", "")])
-            .unwrap_err();
-        prove!(matches!(error, Error::FailedToParseOptionValue(value, type_name, path) if value == arguments.1 && type_name == Some("natural number".into()) && path == vec!(arguments.0.into())))
+        let argument = format!("{value}");
+        let Err(Error::FailedToParseOptionValue(value, type_name, path)) =
+            parser.parse_with([format!("--{name}"), argument.clone()], [("", "")])
+        else {
+            panic!()
+        };
+        assert_eq!(value.as_str(), argument);
+        assert_eq!(type_name, Some("natural number".into()));
+        assert_eq!(path, vec!(name.clone().into()));
+        Ok::<(), ()>(())
     })?;
     Ok(())
 }
@@ -152,11 +167,11 @@ fn invalid_swizzling() -> Result {
     assert_eq!(parser.parse_with(["-b"], [("", "")]), Ok((false, true)));
     assert_eq!(
         parser.parse_with(["-ab"], [("", "")]),
-        Err(Error::InvalidSwizzleOption('b'))
+        Err(Error::InvalidSwizzleOption("b".into()))
     );
     assert_eq!(
         parser.parse_with(["-ba"], [("", "")]),
-        Err(Error::InvalidSwizzleOption('b'))
+        Err(Error::InvalidSwizzleOption("b".into()))
     );
     Ok(())
 }
@@ -186,16 +201,17 @@ fn parses_enum_value() -> Result {
         }
     }
 
-    let parser = Parser::verb(|verb|
+    let parser = Parser::verb(|verb| {
         verb.option::<Casing, _>(|option| {
-            option.name("c")
+            option
+                .name("c")
                 .valid("c(amel-case)?")
                 .valid("p(ascal-case)?")
                 .valid("s(nake-case)?")
                 .default(Casing::Same)
         })
-            .map(|(case,)| case)
-    )?;
+        .map(|(case,)| case)
+    })?;
     assert_eq!(
         parser.parse_with(["-c", "camel-case"], [("", "")]),
         Ok(Casing::camelCase)
@@ -227,7 +243,7 @@ fn parses_enum_value() -> Result {
             ["c(amel-case)?", "p(ascal-case)?", "s(nake-case)?"]
                 .map(ToString::to_string)
                 .to_vec(),
-            vec!["-c".into()]
+            vec!["c".into()]
         ))
     );
     Ok(())

@@ -1,5 +1,5 @@
 use crate::{
-    meta::{Meta, Prefix},
+    meta::{prefix, Meta, Prefix},
     parse::Key,
     style::{Format, Item, Line, Style, Termion},
 };
@@ -86,16 +86,26 @@ impl<'a> Helper<'a> {
         prefix: impl Fn(Helper) -> Result<usize, fmt::Error>,
         suffix: impl Fn(Helper) -> Result<usize, fmt::Error>,
     ) -> Result<usize, fmt::Error> {
+        let mut position = 0;
         self.join(
             metas,
             prefix,
             suffix,
             |mut helper| helper.write(", "),
             |meta| match meta {
-                Meta::Name(Prefix::None, value) => Some(Cow::Borrowed(value)),
-                Meta::Name(Prefix::Short, value) if short => Some(Cow::Borrowed(value)),
-                Meta::Name(Prefix::Long, value) if long => Some(Cow::Borrowed(value)),
-                Meta::Position(position) if short => Some(Cow::Owned(format!("[{position}]"))),
+                Meta::Name(value) => match self::prefix(value) {
+                    Prefix::None => Some(Cow::Borrowed(value)),
+                    Prefix::Short if short => Some(Cow::Borrowed(value)),
+                    Prefix::Long if long => Some(Cow::Borrowed(value)),
+                    _ => None,
+                },
+                // TODO: This is wrong? Position needs to consider sibling nodes which may not be available through 'metas'.
+                // - Example: When rendering the help for an option with '.position()'.
+                Meta::Position if short => {
+                    let current = position;
+                    position += 1;
+                    Some(Cow::Owned(format!("[{current}]")))
+                }
                 _ => None,
             },
         )
@@ -348,7 +358,7 @@ impl<'a> Helper<'a> {
         }
     }
 
-    fn columns(&mut self, metas: &[Meta], depth: usize) -> Columns {
+    fn columns(&mut self, metas: &[Meta], position: &mut usize, depth: usize) -> Columns {
         let (mut short, mut long) = (false, false);
         let mut columns = Columns::default();
         for meta in Meta::visible(metas) {
@@ -358,25 +368,30 @@ impl<'a> Helper<'a> {
             }
 
             match meta {
-                Meta::Position(position) if *position < 10 && depth == 0 => {
-                    columns.short += 3 + if replace(&mut short, true) { 2 } else { 0 }
+                Meta::Position if depth == 0 => {
+                    *position += 1;
+                    if *position < 10 {
+                        columns.short += 3 + if replace(&mut short, true) { 2 } else { 0 }
+                    } else {
+                        columns.short += 4 + if replace(&mut short, true) { 2 } else { 0 }
+                    }
                 }
-                Meta::Position(_) if depth == 0 => {
-                    columns.short += 4 + if replace(&mut short, true) { 2 } else { 0 }
-                }
-                Meta::Name(Prefix::Short, value) if depth == 0 => {
-                    columns.short += value.len() + if replace(&mut short, true) { 2 } else { 0 }
-                }
-                Meta::Name(Prefix::Long, value) if depth == 0 => {
-                    columns.long += value.len() + if replace(&mut long, true) { 2 } else { 0 }
-                }
+                Meta::Name(value) if depth == 0 => match prefix(value) {
+                    Prefix::None => {}
+                    Prefix::Short => {
+                        columns.long += value.len() + if replace(&mut long, true) { 2 } else { 0 }
+                    }
+                    Prefix::Long => {
+                        columns.short += value.len() + if replace(&mut short, true) { 2 } else { 0 }
+                    }
+                },
                 Meta::Type(value) if depth == 0 => {
                     columns.types = value.len();
                     columns.types += helper.style.begin(Item::Type).width();
                     columns.types += helper.style.end(Item::Type).width();
                 }
                 Meta::Option(metas) | Meta::Verb(metas) | Meta::Group(metas) if depth > 0 => {
-                    let child = helper.columns(metas, depth - 1);
+                    let child = helper.columns(metas, position, depth - 1);
                     columns.short = columns.short.max(child.short);
                     columns.long = columns.long.max(child.long);
                     columns.types = columns.types.max(child.types);
@@ -407,7 +422,7 @@ impl<'a> Helper<'a> {
             |_| Ok(0),
             |mut helper| helper.write(" | "),
             |meta| match meta {
-                Meta::Valid(value) => Some(Cow::Borrowed(value)),
+                Meta::Valid(value) => Some(Cow::Borrowed(value.as_str())),
                 _ => None,
             },
         )?;
@@ -427,13 +442,13 @@ impl<'a> Helper<'a> {
     }
 
     fn node(&mut self, root: &Meta, metas: &[Meta], depth: usize) -> fmt::Result {
-        let columns = self.columns(metas, 1);
+        let columns = self.columns(metas, &mut 0, 1);
         for meta in Meta::visible(metas) {
             let mut helper = self.own();
             if let Some(style) = Meta::style(meta.children()) {
                 helper.style = style;
             }
-            
+
             match meta {
                 Meta::Help(value) => {
                     helper.indentation()?;

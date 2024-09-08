@@ -1,6 +1,15 @@
+use regex::Regex;
+
 use crate::{parse::Key, style::Style};
 use core::num::NonZeroUsize;
-use std::{borrow::Cow, iter::from_fn, ops::ControlFlow, slice::from_ref, sync::Arc};
+use std::{
+    borrow::Cow,
+    cmp, fmt, hash,
+    iter::from_fn,
+    ops::{ControlFlow, Deref},
+    slice::from_ref,
+    sync::Arc,
+};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Prefix {
@@ -9,26 +18,32 @@ pub enum Prefix {
     Long,
 }
 
+#[derive(Debug, Clone, Eq)]
+pub enum Text {
+    Static(&'static str),
+    Shared(Arc<str>),
+}
+
 #[derive(Clone)]
 pub enum Meta {
-    Name(Prefix, Cow<'static, str>),
-    Position(usize),
-    Version(Cow<'static, str>),
-    License(Cow<'static, str>, Cow<'static, str>),
-    Author(Cow<'static, str>),
-    Help(Cow<'static, str>),
+    Name(Text),
+    Position,
+    Version(Text),
+    License(Text, Text),
+    Author(Text),
+    Help(Text),
     Line,
-    Usage(Cow<'static, str>),
-    Summary(Cow<'static, str>),
-    Home(Cow<'static, str>),
-    Repository(Cow<'static, str>),
-    Note(Cow<'static, str>),
-    Type(Cow<'static, str>),
-    Valid(Cow<'static, str>),
-    Require(Cow<'static, str>),
+    Usage(Text),
+    Summary(Text),
+    Home(Text),
+    Repository(Text),
+    Note(Text),
+    Type(Text),
+    Valid(Regex),
+    Require(Text),
     Many(Option<NonZeroUsize>),
-    Default(Cow<'static, str>),
-    Environment(Cow<'static, str>),
+    Default(Text),
+    Environment(Text),
     Prefix(char),
     Style(Arc<dyn Style>),
     Show,
@@ -87,8 +102,8 @@ impl Options {
 impl Meta {
     pub fn clone(&self, depth: usize) -> Self {
         match self {
-            Meta::Name(prefix, value) => Meta::Name(*prefix, value.clone()),
-            Meta::Position(value) => Meta::Position(*value),
+            Meta::Name(value) => Meta::Name(value.clone()),
+            Meta::Position => Meta::Position,
             Meta::Version(value) => Meta::Version(value.clone()),
             Meta::License(name, content) => Meta::License(name.clone(), content.clone()),
             Meta::Author(value) => Meta::Author(value.clone()),
@@ -144,7 +159,7 @@ impl Meta {
         }
     }
 
-    pub(crate) fn require(&self) -> Option<Cow<'static, str>> {
+    pub(crate) fn require(&self) -> Option<Text> {
         let control = Self::descend(
             from_ref(self),
             None,
@@ -167,25 +182,28 @@ impl Meta {
     pub(crate) fn key(&self) -> Option<Key> {
         let control = Self::descend(
             from_ref(self),
-            (None, None, None, None, false),
+            (None, None, None, None::<&usize>, false),
             false,
             1,
             |state, meta| {
                 ControlFlow::<(), _>::Continue(match meta {
                     Meta::Verb(_) | Meta::Option(_) => (state.0, state.1, state.2, state.3, true),
                     Meta::Group(_) => (state.0, state.1, state.2, state.3, false),
-                    Meta::Name(Prefix::None, value) if state.4 => {
-                        (state.0.or(Some(value)), state.1, state.2, state.3, state.4)
-                    }
-                    Meta::Name(Prefix::Short, value) if state.4 => {
-                        (state.0, state.1.or(Some(value)), state.2, state.3, state.4)
-                    }
-                    Meta::Name(Prefix::Long, value) if state.4 => {
-                        (state.0, state.1, state.2.or(Some(value)), state.3, state.4)
-                    }
-                    Meta::Position(value) if state.4 => {
-                        (state.0, state.1, state.2, state.3.or(Some(value)), state.4)
-                    }
+                    Meta::Name(value) if state.4 => match prefix(value) {
+                        Prefix::None => {
+                            (state.0.or(Some(value)), state.1, state.2, state.3, state.4)
+                        }
+                        Prefix::Short => {
+                            (state.0, state.1.or(Some(value)), state.2, state.3, state.4)
+                        }
+                        Prefix::Long => {
+                            (state.0, state.1, state.2.or(Some(value)), state.3, state.4)
+                        }
+                    },
+                    // TODO: Fix this...
+                    // Meta::Position(value) if state.4 => {
+                    //     (state.0, state.1, state.2, state.3.or(Some(value)), state.4)
+                    // }
                     _ => state,
                 })
             },
@@ -265,5 +283,109 @@ impl Meta {
             }
         }
         up(state, self)
+    }
+}
+
+impl Text {
+    #[inline]
+    pub fn as_str(&self) -> &str {
+        match self {
+            Text::Static(value) => value,
+            Text::Shared(value) => value,
+        }
+    }
+}
+
+impl PartialEq for Text {
+    fn eq(&self, other: &Self) -> bool {
+        self.as_str().eq(other.as_str())
+    }
+}
+
+impl PartialOrd for Text {
+    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
+        Some(self.as_str().cmp(other.as_str()))
+    }
+}
+
+impl Ord for Text {
+    fn cmp(&self, other: &Self) -> cmp::Ordering {
+        self.as_str().cmp(other.as_str())
+    }
+}
+
+impl hash::Hash for Text {
+    fn hash<H: hash::Hasher>(&self, state: &mut H) {
+        self.as_str().hash(state);
+    }
+}
+
+impl Deref for Text {
+    type Target = str;
+
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Text::Static(value) => value,
+            Text::Shared(value) => value,
+        }
+    }
+}
+
+impl fmt::Display for Text {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Text::Static(value) => fmt::Display::fmt(value, f),
+            Text::Shared(value) => fmt::Display::fmt(value, f),
+        }
+    }
+}
+
+impl FromIterator<char> for Text {
+    fn from_iter<T: IntoIterator<Item = char>>(iter: T) -> Self {
+        Text::Shared(iter.into_iter().collect::<String>().into())
+    }
+}
+
+impl From<&'static str> for Text {
+    #[inline]
+    fn from(value: &'static str) -> Self {
+        Self::Static(value)
+    }
+}
+
+impl From<Cow<'static, str>> for Text {
+    #[inline]
+    fn from(value: Cow<'static, str>) -> Self {
+        match value {
+            Cow::Borrowed(value) => Self::Static(value),
+            Cow::Owned(value) => Self::Shared(value.into()),
+        }
+    }
+}
+
+macro_rules! from {
+    ($type: ty) => {
+        impl From<$type> for Text {
+            #[inline]
+            fn from(value: $type) -> Self {
+                Self::Shared(value.into())
+            }
+        }
+    };
+}
+
+from!(String);
+from!(Box<str>);
+from!(Arc<str>);
+
+pub(crate) fn prefix(value: &str) -> Prefix {
+    let mut value = value.chars();
+    if value.next().is_none() {
+        Prefix::None
+    } else if value.next().is_none() {
+        Prefix::Short
+    } else {
+        Prefix::Long
     }
 }

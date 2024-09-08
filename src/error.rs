@@ -1,6 +1,6 @@
-use crate::parse::Key;
+use crate::{meta::Text, parse::Key};
 use core::fmt;
-use std::{borrow::Cow, error, mem::replace};
+use std::{error, mem::replace};
 
 #[derive(Clone, PartialEq)]
 pub enum Error {
@@ -9,48 +9,37 @@ pub enum Error {
     Author(Option<String>),
     License(Option<String>),
 
-    MissingOptionValue(Option<Cow<'static, str>>, Vec<Key>),
+    MissingOptionValue(Option<Text>, Vec<Key>),
     MissingRequiredOption(Vec<Key>, Option<Key>),
-    MissingRequiredValue(Vec<Key>, Option<Cow<'static, str>>),
+    MissingRequiredValue(Vec<Key>, Option<Text>),
     DuplicateOption(Vec<Key>),
-    UnrecognizedArgument(Cow<'static, str>, Vec<(Cow<'static, str>, usize)>),
-    ExcessArguments(Vec<Cow<'static, str>>),
+    UnrecognizedArgument(Text, Vec<(Text, usize)>),
+    ExcessArguments(Vec<Text>),
     DuplicateName(String),
     Format(fmt::Error),
     Regex(regex::Error),
-    Other(Cow<'static, str>),
-    FailedToParseEnvironmentVariable(
-        Cow<'static, str>,
-        Cow<'static, str>,
-        Option<Cow<'static, str>>,
-        Vec<Key>,
-        Option<Key>,
-    ),
-    FailedToParseOptionValue(Cow<'static, str>, Option<Cow<'static, str>>, Vec<Key>),
+    Other(Text),
+    FailedToParseEnvironmentVariable(Text, Text, Option<Text>, Vec<Key>, Option<Key>),
+    FailedToParseOptionValue(Text, Option<Text>, Vec<Key>),
     DuplicateVerb(Vec<Key>),
     GroupNestingLimitOverflow,
     InvalidIndex(usize),
     MissingIndex,
     InvalidParseState,
-    InvalidOptionName(Cow<'static, str>),
-    InvalidVerbName(Cow<'static, str>),
+    InvalidOptionName(Text),
+    InvalidVerbName(Text),
     MissingOptionNameOrPosition,
     MissingVerbName,
     FailedToParseArguments,
     InvalidPrefix(char),
     MissingShortOptionNameForSwizzling,
-    InvalidSwizzleOption(Cow<'static, str>),
-    InvalidOptionType(Cow<'static, str>),
+    InvalidSwizzleOption(Text),
+    InvalidOptionType(Text),
     InvalidInitialization,
-    InvalidOptionValue(Cow<'static, str>, Vec<String>, Vec<Key>),
-    InvalidArgument(Cow<'static, str>, Vec<String>, Vec<Key>),
-    
-    InvalidShortOption(Cow<'static, str>),
-    InvalidLongOption(Cow<'static, str>),
+    InvalidOptionValue(Text, Vec<String>, Vec<Key>),
+    InvalidArgument(Text, Vec<String>, Vec<Key>),
+
     EmptyShortOption,
-    EmptyLongOption,
-    InvalidShortVerb(Cow<'static, str>),
-    InvalidLongVerb(Cow<'static, str>),
     EmptyArgument,
 }
 
@@ -73,7 +62,6 @@ impl fmt::Display for Error {
             Error::Author(None) => write!(f, "Missing author.")?,
             Error::License(Some(author)) => write!(f, "{author}")?,
             Error::License(None) => write!(f, "Missing license.")?,
-
             Error::InvalidArgument(argument, patterns, path) => {
                 write!(f, "Invalid argument '{argument}'")?;
                 write_join(f, " for '", "'", " ", path)?;
@@ -159,7 +147,7 @@ impl fmt::Display for Error {
                 write!(f, "Invalid value '{value}'")?;
                 write_join(f, " for option '", "'", " ", path)?;
                 write!(f, ".")?;
-                write_join(f, " Value must match pattern '", "'.", " | ", patterns)?;
+                write_join(f, " Value must match pattern '", "'.", "|", patterns)?;
             }
             Error::InvalidParseState => write!(f, "Invalid parse state.")?,
             Error::GroupNestingLimitOverflow => write!(f, "Group nesting limit overflow.")?,
@@ -169,18 +157,11 @@ impl fmt::Display for Error {
             Error::MissingShortOptionNameForSwizzling => write!(f, "Missing short option name for swizzling. A valid short option name has only a single ascii character.")?,
             Error::InvalidSwizzleOption(value) => write!(f, "Invalid swizzle option '{value}'. A valid swizzle option is tagged for swizzling, has a short name and is of type 'boolean'.")?,
             Error::InvalidInitialization => write!(f, "Invalid initialization.")?,
-
             Error::Format(error) => error.fmt(f)?,
             Error::Regex(error) => error.fmt(f)?,
             Error::Other(error) => error.fmt(f)?,
-
-            Error::InvalidShortOption(key) => todo!(),
-            Error::InvalidLongOption(key) => todo!(),
-            Error::EmptyShortOption => todo!(),
-            Error::EmptyLongOption => todo!(),
-            Error::InvalidShortVerb(key) => todo!(),
-            Error::InvalidLongVerb(key) => todo!(),
-            Error::EmptyArgument => todo!(),
+            Error::EmptyShortOption => write!(f, "Empty short option.")?,
+            Error::EmptyArgument => write!(f, "Empty argument.")?,
         }
         Ok(())
     }
@@ -212,18 +193,18 @@ impl From<regex::Error> for Error {
 
 impl From<&'static str> for Error {
     fn from(value: &'static str) -> Self {
-        Error::from(Cow::Borrowed(value))
+        Error::from(Text::from(value))
     }
 }
 
 impl From<String> for Error {
     fn from(value: String) -> Self {
-        Error::from(Cow::Owned(value))
+        Error::from(Text::from(value))
     }
 }
 
-impl From<Cow<'static, str>> for Error {
-    fn from(value: Cow<'static, str>) -> Self {
+impl From<Text> for Error {
+    fn from(value: Text) -> Self {
         Error::Other(value)
     }
 }

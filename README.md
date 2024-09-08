@@ -4,7 +4,7 @@
 ---
 <p></p>
 <p align="center">
-    <em> A declarative parsing library for pretty and highly customizable command-line interfaces. It provides a composable and extensible `Parse` trait that ensures comparative performance to a macro-full approach while offering greater flexibility and understandability.
+    <em> The **S**weet **C**ommand **L**ine **P**arsing library for pretty and highly customizable command-line interfaces. It provides a composable and extensible `Parse` trait that ensures comparative performance to a macro-full approach while offering greater flexibility and understandability.
 
 *Less magic, more control, same speed.* </em>
 </p>

@@ -1,3 +1,5 @@
+use crate::meta::Text;
+
 use self::color::*;
 use std::{
     borrow::Cow,
@@ -154,61 +156,61 @@ impl<T: Format, const N: usize> Format for [T; N] {
     }
 }
 
-impl Format for Cow<'_, str> {
-    #[inline]
+impl Format for Text {
     fn width(&self) -> usize {
         self.chars().count()
     }
 
-    #[inline]
+    fn format(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        formatter.write_str(self)
+    }
+}
+
+impl Format for Cow<'_, str> {
+    fn width(&self) -> usize {
+        self.chars().count()
+    }
+
     fn format(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
         formatter.write_str(self)
     }
 }
 
 impl Format for String {
-    #[inline]
     fn width(&self) -> usize {
         self.chars().count()
     }
 
-    #[inline]
     fn format(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
         formatter.write_str(self)
     }
 }
 
 impl Format for str {
-    #[inline]
     fn width(&self) -> usize {
         self.chars().count()
     }
 
-    #[inline]
     fn format(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
         formatter.write_str(self)
     }
 }
 
 impl<C: Color> Format for Fg<C> {
-    #[inline]
     fn width(&self) -> usize {
         0
     }
 
-    #[inline]
     fn format(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
         self.fmt(formatter)
     }
 }
 
 impl<C: Color> Format for Bg<C> {
-    #[inline]
     fn width(&self) -> usize {
         0
     }
 
-    #[inline]
     fn format(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
         self.fmt(formatter)
     }
@@ -222,11 +224,9 @@ format!(Italic, 0);
 format!(Underline, 0);
 
 pub trait Style {
-    #[inline]
     fn indent(&self) -> usize {
         2
     }
-    #[inline]
     fn width(&self) -> usize {
         96
     }
@@ -244,31 +244,25 @@ impl<S: Deref + ?Sized> Style for S
 where
     S::Target: Style,
 {
-    #[inline]
     fn indent(&self) -> usize {
         self.deref().indent()
     }
-    #[inline]
     fn width(&self) -> usize {
         self.deref().width()
     }
-    #[inline]
     fn begin(&self, item: Item) -> &dyn Format {
         self.deref().begin(item)
     }
-    #[inline]
     fn end(&self, item: Item) -> &dyn Format {
         self.deref().end(item)
     }
 }
 
 impl Style for Termion {
-    #[inline]
     fn width(&self) -> usize {
         terminal_size().map_or(64, |pair| pair.0 as usize - 32)
     }
 
-    #[inline]
     fn begin(&self, item: Item) -> &dyn Format {
         const BAR: char = '│';
         const ARROW: char = '>';
@@ -303,7 +297,6 @@ impl Style for Termion {
         }
     }
 
-    #[inline]
     fn end(&self, item: Item) -> &dyn Format {
         match item {
             Item::Tag => dynamic!(']', Reset),
@@ -314,7 +307,6 @@ impl Style for Termion {
 }
 
 impl Style for Plain {
-    #[inline]
     fn begin(&self, item: Item) -> &dyn Format {
         const BAR: char = '~';
         const ARROW: &str = "  ";
@@ -334,7 +326,6 @@ impl Style for Plain {
         }
     }
 
-    #[inline]
     fn end(&self, item: Item) -> &dyn Format {
         match item {
             Item::Tag => dynamic!(']'),

@@ -20,13 +20,15 @@ pub use crate::{
 
 /*
     FEATURES:
-    - A `Termion` style for pretty colored and styled formatting (based on the 'termion' crate). 
+    - A `Termion` style for pretty colored and styled formatting (based on the 'termion' crate).
     - A 'Plain' style for minimal formatting.
     - Ability to implement a custom style.
     - Nearest suggestions on typos.
 
     TODO:
-    - Favor `Deserialize` over `FromStr`.
+    - Improve the MASK/SHIFT implementation of `At`.
+    - Remove from the 'regex' crate from the public API.
+    - Favor `Deserialize` over `FromStr`?
         - Define a 'MetaDeserializer' which will be used to collect meta data from a type `T: Deserialize` (including variant names and more).
         - For enums, build a map between case-converted keys and variant names.
     - Generate usage string automatically.
@@ -43,15 +45,8 @@ pub use crate::{
     - Support for json values.
 */
 
-const HELP: usize = usize::MAX;
-const VERSION: usize = usize::MAX - 1;
-const LICENSE: usize = usize::MAX - 2;
-const AUTHOR: usize = usize::MAX - 3;
-const BREAK: usize = usize::MAX - 4;
-
 const SHIFT: u32 = 5;
 const MASK: usize = (1 << SHIFT) - 1;
-const MAXIMUM: u32 = usize::BITS - 14;
 
 #[macro_export]
 macro_rules! header {

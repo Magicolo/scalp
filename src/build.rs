@@ -1,30 +1,26 @@
-use regex::RegexSet;
+use regex::Regex;
 
 use crate::{
     case::Case,
     error::Error,
-    meta::{Meta, Options, Prefix},
+    meta::{Meta, Options, Text},
     parse::{
-        self, Any, At, Default, Environment, Indices, Many, Map, Node, Parse, Parser, Require,
-        Value, With,
+        self, Any, At, Default, Environment, Many, Map, Node, Parse, Parser, Require, Value, With,
     },
     scope::{self, Scope},
     stack::Stack,
-    style, AUTHOR, BREAK, HELP, LICENSE, MAXIMUM, SHIFT, VERSION,
+    style,
 };
 use core::{any::TypeId, default, fmt, marker::PhantomData, num::NonZeroUsize, str::FromStr};
-use std::{
-    any, borrow::Cow, collections::hash_map::Entry, convert::Infallible, mem::replace, sync::Arc,
-};
+use std::{any, convert::Infallible, sync::Arc};
 
 pub struct Builder<S, P = At<()>> {
     case: Case,
-    tag: Cow<'static, str>,
+    tag: Text,
     prefix: char,
     buffer: String,
     parse: Result<P, Error>,
     scope: S,
-    position: usize,
 }
 
 #[derive(Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -106,16 +102,18 @@ impl<S, P> Builder<S, P> {
     fn try_swap_map<Q>(
         self,
         prefix: char,
-        map: impl FnOnce(P, char) -> Result<Q, Error>,
+        case: Case,
+        map: impl FnOnce(P, char, Case) -> Result<Q, Error>,
     ) -> Builder<S, Q> {
         Builder {
-            case: self.case,
+            case,
             tag: self.tag,
             prefix,
             buffer: self.buffer,
             scope: self.scope,
-            parse: self.parse.and_then(|parse| map(parse, self.prefix)),
-            position: self.position,
+            parse: self
+                .parse
+                .and_then(|parse| map(parse, self.prefix, self.case)),
         }
     }
 
@@ -139,7 +137,6 @@ impl<S, P> Builder<S, P> {
             buffer: self.buffer,
             scope: scope(self.scope),
             parse: self.parse.and_then(parse),
-            position: self.position,
         }
     }
 
@@ -153,7 +150,6 @@ impl<S, P> Builder<S, P> {
                 buffer: self.buffer,
                 scope,
                 parse: self.parse,
-                position: self.position,
             },
         )
     }
@@ -169,356 +165,12 @@ impl<S, P> Builder<S, P> {
                 buffer: self.buffer,
                 scope,
                 parse: Ok(parse),
-                position: self.position,
             },
         )
     }
 
-    fn descend(
-        &mut self,
-        meta: &mut Meta,
-        prefix: char,
-        options: bool,
-    ) -> Result<(Indices, RegexSet), Error> {
-        let mut indices = Indices::default();
-        let mut patterns = Vec::new();
-        if let Meta::Option(metas) | Meta::Verb(metas) | Meta::Group(metas) = meta {
-            let (version, help) = self.descend_node(
-                metas,
-                (0, 0),
-                &mut true,
-                &mut indices,
-                &mut patterns,
-                options,
-            )?;
-            if options {
-                if let Some(true) = version {
-                    metas.extend(self.insert_version(&mut indices, true, true)?);
-                }
-                if let Some(true) = help {
-                    metas.extend(self.insert_help(&mut indices, true, true)?);
-                }
-                if version.is_some() || help.is_some() {
-                    Self::insert_key(Cow::Owned(format!("{prefix}{prefix}")), &mut indices, BREAK)?;
-                }
-            }
-        };
-        Ok((indices, RegexSet::new(patterns)?))
-    }
-
-    fn descend_node(
-        &mut self,
-        metas: &mut [Meta],
-        (mask, shift): (usize, u32),
-        show: &mut bool,
-        indices: &mut Indices,
-        patterns: &mut Vec<String>,
-        options: bool,
-    ) -> Result<(Option<bool>, Option<bool>), Error> {
-        let mut index = 0;
-        let mut version = None;
-        let mut help = None;
-        for i in 0..metas.len() {
-            let value = (index << shift) | mask;
-            let Some(meta) = metas.get_mut(i) else {
-                break;
-            };
-            match meta {
-                Meta::Version(_) if *show => version = version.or(Some(true)),
-                Meta::Valid(value) => patterns.push(format!("^{value}$")),
-                Meta::Help(_) | Meta::Usage(_) | Meta::Note(_) if *show => {
-                    help = help.or(Some(true))
-                }
-                Meta::Hide => *show = false,
-                Meta::Show => *show = true,
-                Meta::Option(metas) => {
-                    self.descend_option(metas, indices, value)?;
-                    index += 1;
-                    if *show {
-                        help = help.or(Some(true))
-                    }
-                }
-                Meta::Verb(metas) => {
-                    Self::descend_verb(metas, indices, value)?;
-                    index += 1;
-                    if *show {
-                        help = help.or(Some(true))
-                    }
-                }
-                Meta::Group(_) if shift > MAXIMUM => return Err(Error::GroupNestingLimitOverflow),
-                Meta::Group(metas) => {
-                    let mut show = *show;
-                    let tuple = self.descend_node(
-                        metas,
-                        (value, shift + SHIFT),
-                        &mut show,
-                        indices,
-                        patterns,
-                        options,
-                    )?;
-                    version = merge(version, tuple.0, |left, right| left && right);
-                    help = merge(help, tuple.1, |left, right| left && right);
-                    index += 1;
-                }
-                Meta::Options(option) if options => {
-                    let option = match *option {
-                        Options::Help { short, long } => self.insert_help(indices, short, long)?,
-                        Options::Version { short, long } => {
-                            self.insert_version(indices, short, long)?
-                        }
-                        Options::License { short, long } => {
-                            self.insert_license(indices, short, long)?
-                        }
-                        Options::Author { short, long } => {
-                            self.insert_author(indices, short, long)?
-                        }
-                    };
-                    if let Some(option) = option {
-                        *meta = option;
-                    }
-                    help = Some(false);
-                    version = Some(false);
-                }
-                _ => {}
-            }
-        }
-        Ok((version, help))
-    }
-
-    fn descend_verb(metas: &[Meta], indices: &mut Indices, index: usize) -> Result<(), Error> {
-        let mut has = false;
-        for i in 0..metas.len() {
-            match metas.get(i) {
-                Some(Meta::Name(_, value)) => {
-                    Self::insert_key(value.clone(), indices, index)?;
-                    has = true;
-                }
-                None => break,
-                _ => {}
-            };
-        }
-        if has {
-            Ok(())
-        } else {
-            Err(Error::MissingVerbName)
-        }
-    }
-
-    fn descend_option(
-        &mut self,
-        metas: &[Meta],
-        indices: &mut Indices,
-        index: usize,
-    ) -> Result<(), Error> {
-        let mut has = false;
-        let mut shorts = Vec::new();
-        let mut swizzle = false;
-        for i in 0..metas.len() {
-            match metas.get(i) {
-                Some(Meta::Name(prefix, value)) => {
-                    Self::insert_key(value.clone(), indices, index)?;
-                    has = true;
-                    if let Prefix::Short = prefix {
-                        shorts.extend(value.chars().skip(1));
-                    }
-                }
-                Some(Meta::Swizzle) => swizzle = true,
-                Some(Meta::Position(_)) => {
-                    indices.positions.push(index);
-                    has = true;
-                }
-                None => break,
-                _ => {}
-            };
-        }
-        if swizzle {
-            if shorts.is_empty() {
-                return Err(Error::MissingShortOptionNameForSwizzling);
-            } else {
-                indices.swizzles.extend(shorts);
-            }
-        }
-        if has {
-            Ok(())
-        } else {
-            Err(Error::MissingOptionNameOrPosition)
-        }
-    }
-
-    fn insert_version(
-        &mut self,
-        indices: &mut Indices,
-        short: bool,
-        long: bool,
-    ) -> Result<Option<Meta>, Error> {
-        self.insert_option(
-            indices,
-            if short { Some("v") } else { None },
-            if long { Some("version") } else { None },
-            "Displays version information.",
-            VERSION,
-        )
-    }
-
-    fn insert_license(
-        &mut self,
-        indices: &mut Indices,
-        short: bool,
-        long: bool,
-    ) -> Result<Option<Meta>, Error> {
-        self.insert_option(
-            indices,
-            if short { Some("l") } else { None },
-            if long { Some("license") } else { None },
-            "Displays license information.",
-            LICENSE,
-        )
-    }
-
-    fn insert_author(
-        &mut self,
-        indices: &mut Indices,
-        short: bool,
-        long: bool,
-    ) -> Result<Option<Meta>, Error> {
-        self.insert_option(
-            indices,
-            if short { Some("a") } else { None },
-            if long { Some("author") } else { None },
-            "Displays author information.",
-            AUTHOR,
-        )
-    }
-
-    fn insert_help(
-        &mut self,
-        indices: &mut Indices,
-        short: bool,
-        long: bool,
-    ) -> Result<Option<Meta>, Error> {
-        self.insert_option(
-            indices,
-            if short { Some("h") } else { None },
-            if long { Some("help") } else { None },
-            "Displays this help message.",
-            HELP,
-        )
-    }
-
-    fn insert_option(
-        &mut self,
-        indices: &mut Indices,
-        short: Option<&'static str>,
-        long: Option<&'static str>,
-        help: &'static str,
-        index: usize,
-    ) -> Result<Option<Meta>, Error> {
-        let mut option = vec![Meta::Help(Cow::Borrowed(help))];
-        if let Some(short) = short {
-            let (prefix, value) = self.option_name(short)?;
-            if Self::insert_key(value.clone(), indices, index).is_ok() {
-                option.push(Meta::Name(prefix, value));
-            }
-        }
-        if let Some(long) = long {
-            let (prefix, value) = self.option_name(long)?;
-            if Self::insert_key(value.clone(), indices, index).is_ok() {
-                option.push(Meta::Name(prefix, value));
-            }
-        }
-        if option.len() > 1 {
-            Ok(Some(Meta::Option(option)))
-        } else {
-            Ok(None)
-        }
-    }
-
-    fn insert_key(
-        key: Cow<'static, str>,
-        indices: &mut Indices,
-        index: usize,
-    ) -> Result<(), Error> {
-        match indices.indices.entry(key) {
-            Entry::Occupied(entry) => {
-                let _ = 1;
-                Err(Error::DuplicateName(entry.key().to_string()))
-            }
-            Entry::Vacant(entry) => {
-                entry.insert(index);
-                Ok(())
-            }
-        }
-    }
-
-    fn extend_name(&mut self, name: &str, prefix: bool) -> Option<Prefix> {
-        self.buffer.clear();
-        if name.len() == 1 {
-            if prefix {
-                self.buffer.push(self.prefix);
-            }
-            self.extend_letters(name.chars())
-        } else {
-            if prefix {
-                self.buffer.push(self.prefix);
-                self.buffer.push(self.prefix);
-            }
-            self.extend_letters(self.case.convert(name.chars()))
-        }
-    }
-
-    fn extend_letters(&mut self, letters: impl IntoIterator<Item = char>) -> Option<Prefix> {
-        let mut count = 0;
-        for letter in letters {
-            if letter.is_whitespace() || !letter.is_ascii() {
-                return None;
-            } else {
-                self.buffer.push(letter);
-                count += 1;
-            }
-        }
-        match count {
-            0 => None,
-            1 => Some(Prefix::Short),
-            _ => Some(Prefix::Long),
-        }
-    }
-
-    fn option_name(
-        &mut self,
-        name: impl Into<Cow<'static, str>>,
-    ) -> Result<(Prefix, Cow<'static, str>), Error> {
-        let mut outer = name.into();
-        let Some(prefix) = self.extend_name(&outer, true) else {
-            return Err(Error::InvalidOptionName(outer));
-        };
-        let inner = outer.to_mut();
-        inner.clear();
-        inner.push_str(&self.buffer);
-        Ok((prefix, outer))
-    }
-
-    fn verb_name(
-        &mut self,
-        name: impl Into<Cow<'static, str>>,
-    ) -> Result<(Prefix, Cow<'static, str>), Error> {
-        let mut outer = name.into();
-        let Some(prefix) = self.extend_name(&outer, false) else {
-            return Err(Error::InvalidVerbName(outer));
-        };
-        let inner = outer.to_mut();
-        inner.clear();
-        inner.push_str(&self.buffer);
-        Ok((prefix, outer))
-    }
-
-    fn convert<'a>(&mut self, format: impl Into<Cow<'a, str>>) -> Cow<'a, str> {
-        let mut format = format.into();
-        self.buffer.clear();
-        self.buffer.push_str(&format);
-        let inner = format.to_mut();
-        inner.clear();
-        inner.extend(self.case.convert(self.buffer.chars()));
-        format
+    fn convert(&mut self, format: impl Into<Text>) -> Text {
+        self.case.convert(format.into().chars()).collect()
     }
 }
 
@@ -538,7 +190,7 @@ impl<S: Scope, P> Builder<S, P> {
     pub fn default_with<T, F: Fn() -> T>(
         mut self,
         default: F,
-        format: impl Into<Cow<'static, str>>,
+        format: impl Into<Text>,
     ) -> Builder<S, Default<P, F>>
     where
         P: Parse<Value = Option<T>>,
@@ -548,10 +200,7 @@ impl<S: Scope, P> Builder<S, P> {
             .map_parse(|parse| Default(parse, default))
     }
 
-    pub fn environment<T: FromStr>(
-        self,
-        variable: impl Into<Cow<'static, str>>,
-    ) -> Builder<S, Environment<P>>
+    pub fn environment<T: FromStr>(self, variable: impl Into<Text>) -> Builder<S, Environment<P>>
     where
         P: Parse<Value = Option<T>>,
     {
@@ -596,7 +245,7 @@ impl<S: Scope, P> Builder<S, P> {
         self.require_with(type_name::<T>())
     }
 
-    pub fn require_with<T>(mut self, format: impl Into<Cow<'static, str>>) -> Builder<S, Require<P>>
+    pub fn require_with<T>(mut self, format: impl Into<Text>) -> Builder<S, Require<P>>
     where
         P: Parse<Value = Option<T>>,
     {
@@ -605,7 +254,7 @@ impl<S: Scope, P> Builder<S, P> {
             .map_parse(|parse| Require(parse))
     }
 
-    pub fn help(self, help: impl Into<Cow<'static, str>>) -> Self {
+    pub fn help(self, help: impl Into<Text>) -> Self {
         let help = help.into();
         if help.chars().all(char::is_whitespace) {
             self
@@ -618,7 +267,7 @@ impl<S: Scope, P> Builder<S, P> {
         self.meta(Meta::Line)
     }
 
-    pub fn note(self, note: impl Into<Cow<'static, str>>) -> Self {
+    pub fn note(self, note: impl Into<Text>) -> Self {
         let note = note.into();
         if note.chars().all(char::is_whitespace) {
             self
@@ -667,7 +316,7 @@ impl<S: scope::Node, P> Builder<S, P> {
         }
     }
 
-    pub fn usage(self, usage: impl Into<Cow<'static, str>>) -> Self {
+    pub fn usage(self, usage: impl Into<Text>) -> Self {
         let usage = usage.into();
         if usage.chars().all(char::is_whitespace) {
             self
@@ -751,23 +400,22 @@ impl Builder<scope::Root, ()> {
     const fn new() -> Self {
         Self {
             case: Case::Kebab { upper: false },
-            tag: Cow::Borrowed(parse::TAG),
+            tag: Text::Static(parse::TAG),
             prefix: parse::PREFIX,
             buffer: String::new(),
             parse: Ok(()),
             scope: scope::Root::new(),
-            position: 0,
         }
     }
 }
 
 impl<P> Builder<scope::Group, P> {
-    pub fn name(self, name: impl Into<Cow<'static, str>>) -> Self {
+    pub fn name(self, name: impl Into<Text>) -> Self {
         let name = name.into();
         if name.chars().all(char::is_whitespace) {
             self
         } else {
-            self.meta(Meta::Name(Prefix::None, name))
+            self.meta(Meta::Name(name))
         }
     }
 }
@@ -779,17 +427,25 @@ impl<P> Builder<scope::Verb, P> {
         self
     }
 
-    pub fn name(mut self, name: impl Into<Cow<'static, str>>) -> Self {
+    pub fn name(self, name: impl Into<Text>) -> Self {
         let name = name.into();
-        let meta = self.verb_name(name).map(|pair| Meta::Name(pair.0, pair.1));
-        self.try_meta(meta)
+        self.try_meta(
+            if name
+                .chars()
+                .any(|letter| letter.is_whitespace() || !letter.is_ascii())
+            {
+                Err(Error::InvalidVerbName(name))
+            } else {
+                Ok(Meta::Name(name))
+            },
+        )
     }
 
-    pub fn version(self, version: impl Into<Cow<'static, str>>) -> Self {
+    pub fn version(self, version: impl Into<Text>) -> Self {
         self.meta(Meta::Version(version.into()))
     }
 
-    pub fn summary(self, summary: impl Into<Cow<'static, str>>) -> Self {
+    pub fn summary(self, summary: impl Into<Text>) -> Self {
         let summary = summary.into();
         if summary.chars().all(char::is_whitespace) {
             self
@@ -798,11 +454,7 @@ impl<P> Builder<scope::Verb, P> {
         }
     }
 
-    pub fn license(
-        self,
-        name: impl Into<Cow<'static, str>>,
-        file: impl Into<Cow<'static, str>>,
-    ) -> Self {
+    pub fn license(self, name: impl Into<Text>, file: impl Into<Text>) -> Self {
         let name = name.into();
         let content = file.into();
         if name.chars().all(char::is_whitespace) && content.chars().all(char::is_whitespace) {
@@ -812,7 +464,7 @@ impl<P> Builder<scope::Verb, P> {
         }
     }
 
-    pub fn author(self, author: impl Into<Cow<'static, str>>) -> Self {
+    pub fn author(self, author: impl Into<Text>) -> Self {
         let author = author.into();
         if author.chars().all(char::is_whitespace) {
             self
@@ -821,7 +473,7 @@ impl<P> Builder<scope::Verb, P> {
         }
     }
 
-    pub fn repository(self, repository: impl Into<Cow<'static, str>>) -> Self {
+    pub fn repository(self, repository: impl Into<Text>) -> Self {
         let repository = repository.into();
         if repository.chars().all(char::is_whitespace) {
             self
@@ -830,7 +482,7 @@ impl<P> Builder<scope::Verb, P> {
         }
     }
 
-    pub fn home(self, home: impl Into<Cow<'static, str>>) -> Self {
+    pub fn home(self, home: impl Into<Text>) -> Self {
         let home = home.into();
         if home.chars().all(char::is_whitespace) {
             self
@@ -855,8 +507,8 @@ impl Builder<scope::Option, Value<Unit>> {
 
     pub fn parse_with<T: FromStr>(
         mut self,
-        tag: Option<impl Into<Cow<'static, str>>>,
-        format: impl Into<Cow<'static, str>>,
+        tag: Option<impl Into<Text>>,
+        format: impl Into<Text>,
     ) -> Builder<scope::Option, Value<T>> {
         let format = self.convert(format);
         self.meta(Meta::Type(format)).map_parse(|_| Value {
@@ -867,18 +519,22 @@ impl Builder<scope::Option, Value<Unit>> {
 }
 
 impl<P> Builder<scope::Option, P> {
-    pub fn name(mut self, name: impl Into<Cow<'static, str>>) -> Self {
+    pub fn name(self, name: impl Into<Text>) -> Self {
         let name = name.into();
-        let meta = self
-            .option_name(name)
-            .map(|pair| Meta::Name(pair.0, pair.1));
-        self.try_meta(meta)
+        self.try_meta(
+            if name
+                .chars()
+                .any(|letter| letter.is_whitespace() || !letter.is_ascii())
+            {
+                Err(Error::InvalidOptionName(name))
+            } else {
+                Ok(Meta::Name(name))
+            },
+        )
     }
 
-    pub fn position(mut self) -> Self {
-        let position = self.position;
-        self.position += 1;
-        self.meta(Meta::Position(position))
+    pub fn position(self) -> Self {
+        self.meta(Meta::Position)
     }
 
     pub fn swizzle(self) -> Self
@@ -889,8 +545,12 @@ impl<P> Builder<scope::Option, P> {
         self.meta(Meta::Swizzle)
     }
 
-    pub fn valid(self, pattern: impl Into<Cow<'static, str>>) -> Self {
-        self.meta(Meta::Valid(pattern.into()))
+    pub fn valid(self, pattern: impl Into<Text>) -> Self {
+        let pattern = pattern.into();
+        self.try_meta(match Regex::new(&format!("^{pattern}$")) {
+            Ok(regex) => Ok(Meta::Valid(regex)),
+            Err(error) => Err(Error::Regex(error)),
+        })
     }
 }
 
@@ -902,16 +562,17 @@ where
     P: Stack,
 {
     let prefix = builder.prefix;
+    let case = builder.case;
     let (scope, old, builder) = builder.swap_both(scope::Group::new(), At(()));
     let (group, mut builder) = build(builder).swap_scope(scope);
     let meta = Meta::from(group);
     builder.scope.push(meta.clone(usize::MAX));
-    builder.try_swap_map(prefix, |new, prefix| {
+    builder.try_swap_map(prefix, case, |new, prefix, case| {
         Ok(old?.push(With {
             parse: new,
-            set: RegexSet::empty(),
             meta,
             prefix,
+            case,
         }))
     })
 }
@@ -924,23 +585,17 @@ where
     P: Stack,
 {
     let prefix = builder.prefix;
-    let (scope, old, mut builder) = builder.swap_both(scope::Verb::new(), At(()));
-    let position = replace(&mut builder.position, 0);
+    let case = builder.case;
+    let (scope, old, builder) = builder.swap_both(scope::Verb::new(), At(()));
     let (verb, mut builder) = build(builder).swap_scope(scope);
-    let mut meta = Meta::from(verb);
-    let pair = builder.descend(&mut meta, prefix, true);
-    builder.position = position;
+    let meta = Meta::from(verb);
     builder.scope.push(meta.clone(1));
-    builder.try_swap_map(prefix, |new, prefix| {
-        let (indices, set) = pair?;
+    builder.try_swap_map(prefix, case, |new, prefix, case| {
         Ok(old?.push(With {
-            parse: Node {
-                parse: new,
-                indices,
-            },
+            parse: Node(new),
             meta,
-            set,
             prefix,
+            case,
         }))
     })
 }
@@ -953,18 +608,17 @@ where
     P: Stack,
 {
     let prefix = builder.prefix;
+    let case = builder.case;
     let (scope, old, builder) = builder.swap_both(scope::Option::new(), Value::default());
     let (option, mut builder) = build(builder.parse::<T>()).swap_scope(scope);
-    let mut meta = Meta::from(option);
-    let pair = builder.descend(&mut meta, prefix, false);
+    let meta = Meta::from(option);
     builder.scope.push(meta.clone(1));
-    builder.try_swap_map(prefix, |new, prefix| {
-        let (_, set) = pair?;
+    builder.try_swap_map(prefix, case, |new, prefix, case| {
         Ok(old?.push(With {
             parse: new,
-            set,
             meta,
             prefix,
+            case,
         }))
     })
 }
@@ -994,14 +648,5 @@ fn type_name<T: 'static>() -> &'static str {
             name = split;
         }
         name
-    }
-}
-
-fn merge<T>(left: Option<T>, right: Option<T>, merge: impl FnOnce(T, T) -> T) -> Option<T> {
-    match (left, right) {
-        (None, None) => None,
-        (None, Some(right)) => Some(right),
-        (Some(left), None) => Some(left),
-        (Some(left), Some(right)) => Some(merge(left, right)),
     }
 }

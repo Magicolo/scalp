@@ -20,10 +20,7 @@ pub enum Case {
 
 impl Case {
     #[inline]
-    pub fn convert<'a>(
-        &self,
-        source: impl IntoIterator<Item = char>,
-    ) -> impl Iterator<Item = char> {
+    pub fn convert(&self, source: impl IntoIterator<Item = char>) -> impl Iterator<Item = char> {
         use orn::or8::*;
         match self {
             Case::Same => Iterator::T0(source.into_iter()),
