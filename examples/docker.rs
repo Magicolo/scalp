@@ -293,10 +293,10 @@ fn main() -> Result<(), Error> {
     let environment = [("DOCKER_HOST", "fett")];
     let docker = match parser.parse_with(arguments, environment) {
         Ok(docker) => docker,
-        Err(Error::Help(Some(value))
-            | Error::Version(Some(value))
-            | Error::License(Some(value))
-            | Error::Author(Some(value))) => return Ok(println!("{}", value)),
+        Err(Error::Help(Some(help))) => return Ok(println!("{}", help)),
+        Err(Error::Version(Some(version))) => return Ok(println!("{}", version)),
+        Err(Error::License(Some(license))) => return Ok(println!("{}", license)),
+        Err(Error::Author(Some(author))) => return Ok(println!("{}", author)),
         Err(error) => return Err(error),
     };
     assert_eq!(docker.global.config, "boba".to_string());

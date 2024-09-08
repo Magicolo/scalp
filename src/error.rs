@@ -1,13 +1,17 @@
-use crate::{meta::Text, parse::Key};
+use crate::{
+    help::{Author, Help, License, Version},
+    meta::Text,
+    parse::Key,
+};
 use core::fmt;
 use std::{error, mem::replace};
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone)]
 pub enum Error {
-    Help(Option<String>),
-    Version(Option<String>),
-    Author(Option<String>),
-    License(Option<String>),
+    Help(Option<Help>),
+    Version(Option<Version>),
+    Author(Option<Author>),
+    License(Option<License>),
 
     MissingOptionValue(Option<Text>, Vec<Key>),
     MissingRequiredOption(Vec<Key>, Option<Key>),

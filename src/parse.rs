@@ -14,10 +14,13 @@ use regex::Regex;
 use std::{
     collections::{HashMap, VecDeque},
     fmt,
+    mem::take,
     ops::ControlFlow,
     str::FromStr,
+    sync::Arc,
 };
 
+pub(crate) const CASE: Case = Case::Kebab { upper: false };
 pub(crate) const PREFIX: char = '-';
 pub(crate) const TAG: &str = "true";
 
@@ -28,26 +31,23 @@ pub struct Context<'a> {
     swizzles: &'a mut Vec<char>,
     path: &'a mut Vec<Key>,
     names: &'a mut Vec<Name>,
-    root: Option<&'a Meta>,
-    meta: Option<&'a Meta>,
+    root: Arc<Meta>,
+    meta: Arc<Meta>,
     case: Case,
     prefix: char,
     index: Option<usize>,
 }
 
 #[derive(Clone)]
-pub struct Parser<P>(pub(crate) P);
+pub struct Parser<P> {
+    pub(crate) parse: P,
+    pub(crate) meta: Arc<Meta>,
+    pub(crate) prefix: Option<char>,
+    pub(crate) case: Option<Case>,
+}
 
 #[derive(Clone)]
 pub struct Node<P>(pub(crate) P);
-
-#[derive(Clone)]
-pub struct With<P> {
-    pub(crate) parse: P,
-    pub(crate) meta: Meta,
-    pub(crate) prefix: char,
-    pub(crate) case: Case,
-}
 
 #[derive(Default)]
 pub struct Value<T> {
@@ -195,9 +195,9 @@ impl<'a> Context<'a> {
             path: self.path,
             names: self.names,
             prefix: self.prefix,
-            root: self.root,
+            root: self.root.clone(),
             case: self.case,
-            meta: self.meta,
+            meta: self.meta.clone(),
             index: self.index,
         }
     }
@@ -208,7 +208,7 @@ impl<'a> Context<'a> {
         let Some(argument) = self.arguments.pop_front() else {
             return Ok(None);
         };
-        let metas = self.meta.map_or([].as_ref(), Meta::children);
+        let metas = self.meta.children();
         let result = match &argument {
             Argument::String(key) => {
                 let mut characters = key.chars();
@@ -333,17 +333,16 @@ impl<'a> Context<'a> {
         }
     }
 
-    fn fill(&self, error: Error) -> Error {
-        let Some(meta) = self.meta else {
-            return error;
-        };
+    fn fill(self, error: Error) -> Error {
         match error {
-            Error::Help(None) => {
-                Error::Help(help::help(self.root.unwrap_or(meta), meta, self.path))
-            }
-            Error::Version(None) => Error::Version(help::version(meta, 1)),
-            Error::License(None) => Error::License(help::license(meta, 1)),
-            Error::Author(None) => Error::Author(help::author(meta, 1)),
+            Error::Help(None) => Error::Help(Some(help::Help {
+                root: self.root.clone(),
+                meta: self.meta.clone(),
+                path: take(self.path),
+            })),
+            Error::Version(None) => Error::Version(Some(help::Version(self.meta.clone()))),
+            Error::License(None) => Error::License(Some(help::License(self.meta.clone()))),
+            Error::Author(None) => Error::Author(Some(help::Author(self.meta.clone()))),
             _ => error,
         }
     }
@@ -395,50 +394,44 @@ impl<'a> Context<'a> {
                 _ => Ok(state),
             }
         }
-        for meta in self.meta.map_or([].as_ref(), Meta::children) {
+        for meta in self.meta.children() {
             state = descend(meta, state, &mut valid)?;
         }
         Ok(state)
     }
 
-    fn missing_option(&self) -> Error {
-        Error::MissingOptionValue(self.type_name(), self.path.clone())
+    fn missing_option(self) -> Error {
+        Error::MissingOptionValue(self.type_name(), take(self.path))
     }
 
-    fn missing_required(&self) -> Error {
-        let path = self.path.clone();
-        match self.meta {
-            Some(Meta::Option(_)) => {
-                Error::MissingRequiredOption(path, self.meta.and_then(Meta::key))
-            }
-            _ => Error::MissingRequiredValue(path, self.meta.and_then(Meta::require)),
+    fn missing_required(self) -> Error {
+        let path = take(self.path);
+        if let Meta::Option(_) = self.meta.as_ref() {
+            Error::MissingRequiredOption(path, self.meta.key())
+        } else {
+            Error::MissingRequiredValue(path, self.meta.require())
         }
     }
 
-    fn duplicate_verb(&self) -> Error {
-        Error::DuplicateVerb(self.path.clone())
+    fn duplicate_verb(self) -> Error {
+        Error::DuplicateVerb(take(self.path))
     }
 
-    fn duplicate_option(&self) -> Error {
-        Error::DuplicateOption(self.path.clone())
+    fn duplicate_option(self) -> Error {
+        Error::DuplicateOption(take(self.path))
     }
 
-    fn invalid_option(&self, value: Text) -> Error {
-        Error::InvalidOptionValue(value, self.patterns(), self.path.clone())
+    fn invalid_option(self, value: Text) -> Error {
+        Error::InvalidOptionValue(value, self.patterns(), take(self.path))
     }
 
-    fn failed_parse(&self, value: Text) -> Error {
-        Error::FailedToParseOptionValue(value, self.type_name(), self.path.clone())
+    fn failed_parse(self, value: Text) -> Error {
+        Error::FailedToParseOptionValue(value, self.type_name(), take(self.path))
     }
-
-    // fn restore(&mut self, key: Text) {
-    //     self.arguments.push_front(key)
-    // }
 
     fn type_name(&self) -> Option<Text> {
-        let meta = self.meta?;
         let mut name = None;
-        for meta in Meta::visible(meta.children()) {
+        for meta in self.meta.children() {
             if let Meta::Type(value) = meta {
                 name = Some(value);
             }
@@ -452,13 +445,61 @@ impl<'a> Context<'a> {
         state
     }
 
-    fn with<'b>(&'b mut self, meta: &'b Meta, prefix: char, case: Case) -> Context<'b> {
+    fn with(&mut self, meta: Arc<Meta>, prefix: Option<char>, case: Option<Case>) -> Context {
         let mut context = self.own();
-        context.root = context.root.or(Some(meta));
-        context.meta = Some(meta);
-        context.prefix = prefix;
-        context.case = case;
+        context.meta = meta;
+        if let Some(prefix) = prefix {
+            context.prefix = prefix;
+        }
+        if let Some(case) = case {
+            context.case = case;
+        }
         context
+    }
+}
+
+impl<P> Parser<P> {
+    #[inline]
+    pub fn case(mut self, case: Case) -> Self {
+        self.case = Some(case);
+        self
+    }
+
+    #[inline]
+    pub fn prefix(mut self, prefix: char) -> Self {
+        self.prefix = Some(prefix);
+        self
+    }
+
+    #[inline]
+    pub fn verbz<Q>(mut self, parser: Parser<Q>) -> Parser<P::Push<Parser<Node<Q>>>>
+    where
+        P: Stack,
+    {
+        self.push(parser.meta.as_ref().clone(0));
+        self.map(|parse| parse.push(parser.map(Node)))
+    }
+
+    fn map<Q>(self, map: impl FnOnce(P) -> Q) -> Parser<Q> {
+        Parser {
+            parse: map(self.parse),
+            meta: self.meta,
+            prefix: self.prefix,
+            case: self.case,
+        }
+    }
+
+    fn push(&mut self, meta: Meta) {
+        match Arc::get_mut(&mut self.meta) {
+            Some(target) => {
+                target.push(meta);
+            }
+            None => {
+                let mut target: Meta = Clone::clone(self.meta.as_ref());
+                target.push(meta);
+                self.meta = Arc::new(target);
+            }
+        }
     }
 }
 
@@ -489,16 +530,16 @@ impl<T, P: Parse<Value = Option<T>>> Parser<P> {
             swizzles: &mut Vec::new(),
             path: &mut Vec::new(),
             names: &mut Vec::new(),
-            prefix: PREFIX,
-            case: Case::Kebab { upper: false },
             index: None,
-            root: None,
-            meta: None,
+            prefix: self.prefix.unwrap_or(PREFIX),
+            case: self.case.unwrap_or(CASE),
+            root: self.meta.clone(),
+            meta: self.meta.clone(),
         };
-        let state = self.0.initialize(context.own())?;
-        let state = self.0.parse(state, context.own())?;
+        let state = self.parse.initialize(context.own())?;
+        let state = self.parse.parse(state, context.own())?;
         let value = self
-            .0
+            .parse
             .finalize(state, context)?
             .ok_or(Error::FailedToParseArguments)?;
         if arguments.is_empty() {
@@ -766,12 +807,12 @@ impl KeyFinder<'_> {
     }
 }
 
-impl<P: Parse> Parse for With<P> {
+impl<P: Parse> Parse for Parser<P> {
     type State = P::State;
     type Value = P::Value;
 
     fn initialize(&self, mut context: Context) -> Result<Self::State, Error> {
-        let mut context = context.with(&self.meta, self.prefix, self.case);
+        let mut context = context.with(self.meta.clone(), self.prefix, self.case);
         match self.parse.initialize(context.own()) {
             Ok(state) => Ok(state),
             Err(error) => Err(context.fill(error)),
@@ -779,7 +820,7 @@ impl<P: Parse> Parse for With<P> {
     }
 
     fn parse(&self, state: Self::State, mut context: Context) -> Result<Self::State, Error> {
-        let mut context = context.with(&self.meta, self.prefix, self.case);
+        let mut context = context.with(self.meta.clone(), self.prefix, self.case);
         match self.parse.parse(state, context.own()) {
             Ok(state) => Ok(state),
             Err(error) => Err(context.fill(error)),
@@ -787,7 +828,7 @@ impl<P: Parse> Parse for With<P> {
     }
 
     fn finalize(&self, state: Self::State, mut context: Context) -> Result<Self::Value, Error> {
-        let mut context = context.with(&self.meta, self.prefix, self.case);
+        let mut context = context.with(self.meta.clone(), self.prefix, self.case);
         match self.parse.finalize(state, context.own()) {
             Ok(value) => Ok(value),
             Err(error) => Err(context.fill(error)),
@@ -874,8 +915,8 @@ impl<T: FromStr, P: Parse<Value = Option<T>>> Parse for Environment<P> {
                         self.1.clone(),
                         value.clone(),
                         context.type_name(),
-                        context.path.clone(),
-                        context.meta.and_then(Meta::key),
+                        take(context.path),
+                        context.meta.key(),
                     )),
                 },
                 None => Ok(None),

@@ -116,7 +116,7 @@ fn verb_with_no_option_allows_for_root_options_before_and_after() -> Result {
     )
         .check(COUNT, |(values, v, u)| {
             let Some([a, b, c]) = values else {
-                return Ok(true);
+                return Ok(());
             };
 
             let (v, u) = (*v, *u);
@@ -137,7 +137,8 @@ fn verb_with_no_option_allows_for_root_options_before_and_after() -> Result {
                 ],
                 [("", "")],
             );
-            prove!(result == Ok((v, u, Some(()))))
+            assert_eq!(result.ok(), Some((v, u, Some(()))));
+            Ok::<(), ()>(())
         })?;
     Ok(())
 }
@@ -163,16 +164,24 @@ fn invalid_swizzling() -> Result {
         verb.option(|option| option.name("a").swizzle().default(false))
             .option(|option| option.name("b").default(false))
     })?;
-    assert_eq!(parser.parse_with(["-a"], [("", "")]), Ok((true, false)));
-    assert_eq!(parser.parse_with(["-b"], [("", "")]), Ok((false, true)));
     assert_eq!(
-        parser.parse_with(["-ab"], [("", "")]),
-        Err(Error::InvalidSwizzleOption("b".into()))
+        parser.parse_with(["-a"], [("", "")]).ok(),
+        Some((true, false))
     );
     assert_eq!(
-        parser.parse_with(["-ba"], [("", "")]),
-        Err(Error::InvalidSwizzleOption("b".into()))
+        parser.parse_with(["-b"], [("", "")]).ok(),
+        Some((false, true))
     );
+
+    let Err(Error::InvalidSwizzleOption(name)) = parser.parse_with(["-ab"], [("", "")]) else {
+        panic!()
+    };
+    assert_eq!(name.as_str(), "b");
+
+    let Err(Error::InvalidSwizzleOption(name)) = parser.parse_with(["-ba"], [("", "")]) else {
+        panic!()
+    };
+    assert_eq!(name.as_str(), "b");
     Ok(())
 }
 
@@ -213,39 +222,41 @@ fn parses_enum_value() -> Result {
         .map(|(case,)| case)
     })?;
     assert_eq!(
-        parser.parse_with(["-c", "camel-case"], [("", "")]),
-        Ok(Casing::camelCase)
+        parser.parse_with(["-c", "camel-case"], [("", "")]).ok(),
+        Some(Casing::camelCase)
     );
     assert_eq!(
-        parser.parse_with(["-c", "c"], [("", "")]),
-        Ok(Casing::camelCase)
+        parser.parse_with(["-c", "c"], [("", "")]).ok(),
+        Some(Casing::camelCase)
     );
     assert_eq!(
-        parser.parse_with(["-c", "pascal-case"], [("", "")]),
-        Ok(Casing::PascalCase)
+        parser.parse_with(["-c", "pascal-case"], [("", "")]).ok(),
+        Some(Casing::PascalCase)
     );
     assert_eq!(
-        parser.parse_with(["-c", "p"], [("", "")]),
-        Ok(Casing::PascalCase)
+        parser.parse_with(["-c", "p"], [("", "")]).ok(),
+        Some(Casing::PascalCase)
     );
     assert_eq!(
-        parser.parse_with(["-c", "snake-case"], [("", "")]),
-        Ok(Casing::snake_case)
+        parser.parse_with(["-c", "snake-case"], [("", "")]).ok(),
+        Some(Casing::snake_case)
     );
     assert_eq!(
-        parser.parse_with(["-c", "s"], [("", "")]),
-        Ok(Casing::snake_case)
+        parser.parse_with(["-c", "s"], [("", "")]).ok(),
+        Some(Casing::snake_case)
     );
+
+    let Err(Error::InvalidOptionValue(value, patterns, path)) =
+        parser.parse_with(["-c", "same"], [("", "")])
+    else {
+        panic!()
+    };
+    assert_eq!(value.as_str(), "same");
     assert_eq!(
-        parser.parse_with(["-c", "same"], [("", "")]),
-        Err(Error::InvalidOptionValue(
-            "same".into(),
-            ["c(amel-case)?", "p(ascal-case)?", "s(nake-case)?"]
-                .map(ToString::to_string)
-                .to_vec(),
-            vec!["c".into()]
-        ))
+        patterns,
+        ["c(amel-case)?", "p(ascal-case)?", "s(nake-case)?"]
     );
+    assert_eq!(path, vec!["c".into()]);
     Ok(())
 }
 

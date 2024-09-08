@@ -26,6 +26,8 @@ pub use crate::{
     - Nearest suggestions on typos.
 
     TODO:
+    - Can `help::scope` be improved to reduce allocations?
+    - Make `Termion` a facultative dependency (use cargo features).
     - Improve the MASK/SHIFT implementation of `At`.
     - Remove from the 'regex' crate from the public API.
     - Favor `Deserialize` over `FromStr`?

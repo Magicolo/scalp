@@ -19,7 +19,6 @@ pub enum Case {
 }
 
 impl Case {
-    #[inline]
     pub fn convert(&self, source: impl IntoIterator<Item = char>) -> impl Iterator<Item = char> {
         use orn::or8::*;
         match self {
@@ -37,7 +36,6 @@ impl Case {
         .map(Or::into)
     }
 
-    #[inline]
     pub fn upper(source: impl IntoIterator<Item = char>) -> impl Iterator<Item = char> {
         source.into_iter().filter_map(|letter| {
             if is_separator(letter) {
@@ -48,7 +46,6 @@ impl Case {
         })
     }
 
-    #[inline]
     pub fn lower(source: impl IntoIterator<Item = char>) -> impl Iterator<Item = char> {
         source.into_iter().filter_map(|letter| {
             if is_separator(letter) {
@@ -59,17 +56,14 @@ impl Case {
         })
     }
 
-    #[inline]
     pub fn pascal(source: impl IntoIterator<Item = char>) -> impl Iterator<Item = char> {
         continuous(source, true)
     }
 
-    #[inline]
     pub fn camel(source: impl IntoIterator<Item = char>) -> impl Iterator<Item = char> {
         continuous(source, false)
     }
 
-    #[inline]
     pub fn snake(
         source: impl IntoIterator<Item = char>,
         upper: bool,
@@ -77,7 +71,6 @@ impl Case {
         separated(source, '_', !upper)
     }
 
-    #[inline]
     pub fn kebab(
         source: impl IntoIterator<Item = char>,
         upper: bool,
@@ -86,12 +79,10 @@ impl Case {
     }
 }
 
-#[inline]
 const fn is_separator(letter: char) -> bool {
     matches!(letter, '_' | '-' | ' ' | '\n')
 }
 
-#[inline]
 fn continuous(
     source: impl IntoIterator<Item = char>,
     mut first: bool,
@@ -121,7 +112,6 @@ fn continuous(
     })
 }
 
-#[inline]
 fn separated(
     source: impl IntoIterator<Item = char>,
     separator: char,

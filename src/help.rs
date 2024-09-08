@@ -1,21 +1,32 @@
 use crate::{
-    meta::{prefix, Meta, Prefix},
+    meta::{prefix, Meta, Prefix, Text},
     parse::Key,
     style::{Format, Item, Line, Style, Termion},
 };
-use core::{
-    fmt::{self, Write},
-    mem::{replace, take},
-    slice::from_ref,
-};
+use core::{fmt, mem::replace, slice::from_ref};
 use std::{
     borrow::Cow,
+    cell::Cell,
     fs,
     ops::{ControlFlow, Deref},
+    sync::Arc,
 };
 
-struct Helper<'a> {
-    buffer: &'a mut String,
+#[derive(Debug, Clone)]
+pub struct Help {
+    pub(crate) root: Arc<Meta>,
+    pub(crate) meta: Arc<Meta>,
+    pub(crate) path: Vec<Key>,
+}
+#[derive(Debug, Clone)]
+pub struct Version(pub(crate) Arc<Meta>);
+#[derive(Debug, Clone)]
+pub struct License(pub(crate) Arc<Meta>);
+#[derive(Debug, Clone)]
+pub struct Author(pub(crate) Arc<Meta>);
+
+struct Helper<'a, 'b> {
+    format: &'a mut fmt::Formatter<'b>,
     path: &'a [Key],
     style: &'a dyn Style,
     indent: usize,
@@ -28,37 +39,117 @@ struct Columns {
     types: usize,
 }
 
-struct Wrap<F>(F);
-
-impl<F: Format> fmt::Display for Wrap<F> {
-    #[inline]
+impl fmt::Display for Help {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        self.0.format(f)
+        let mut writer = Helper {
+            format: f,
+            path: &self.path,
+            style: &Termion,
+            indent: 0,
+        };
+        writer.node(&self.root, from_ref(&self.meta), 0)
     }
 }
 
-impl<'a> Helper<'a> {
+impl Version {
+    pub fn versions(&self) -> impl Iterator<Item = &Text> {
+        self.0.children().iter().filter_map(|meta| match meta {
+            Meta::Version(version) => Some(version),
+            _ => None,
+        })
+    }
+
+    #[inline]
+    pub fn meta(&self) -> &Meta {
+        &self.0
+    }
+}
+
+impl fmt::Display for Version {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        join(f, self.versions())
+    }
+}
+
+impl Author {
+    pub fn authors(&self) -> impl Iterator<Item = &Text> {
+        self.0.children().iter().filter_map(|meta| match meta {
+            Meta::Author(name) => Some(name),
+            _ => None,
+        })
+    }
+
+    #[inline]
+    pub fn meta(&self) -> &Meta {
+        &self.0
+    }
+}
+
+impl fmt::Display for Author {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        join(f, self.authors())
+    }
+}
+
+impl License {
+    pub fn licenses(&self) -> impl Iterator<Item = (&Text, &Text)> {
+        self.0.children().iter().filter_map(|meta| match meta {
+            Meta::License(name, file) => Some((name, file)),
+            _ => None,
+        })
+    }
+
+    #[inline]
+    pub fn meta(&self) -> &Meta {
+        &self.0
+    }
+}
+
+impl fmt::Display for License {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        join(
+            f,
+            self.licenses()
+                .map(|(name, file)| match fs::read_to_string(file.deref()) {
+                    Ok(content) => content.into(),
+                    Err(_) if file.chars().all(char::is_whitespace) => name.clone(),
+                    Err(_) => file.clone(),
+                }),
+        )
+    }
+}
+
+impl<'a, 'b> Helper<'a, 'b> {
     fn space(&mut self, width: usize) -> Result<usize, fmt::Error> {
         for _ in 0..width {
-            write!(self.buffer, " ")?;
+            write!(self.format, " ")?;
         }
         Ok(width)
     }
 
-    fn own(&mut self) -> Helper {
+    fn own(&mut self) -> Helper<'_, 'b> {
         Helper {
-            buffer: self.buffer,
+            format: self.format,
             path: self.path,
             style: self.style,
             indent: self.indent,
         }
     }
 
-    fn indent(&mut self) -> Helper {
+    fn with<'c, 'd>(&'c self, formatter: &'c mut fmt::Formatter<'d>) -> Helper<'c, 'd> {
+        Helper {
+            format: formatter,
+            path: self.path,
+            style: self.style,
+            indent: self.indent,
+        }
+    }
+
+    fn indent(&mut self) -> Helper<'_, 'b> {
         self.indent_with(self.style.indent())
     }
 
-    fn indent_with(&mut self, by: usize) -> Helper {
+    fn indent_with(&mut self, by: usize) -> Helper<'_, 'b> {
         let mut helper = self.own();
         helper.indent += by;
         helper
@@ -69,13 +160,17 @@ impl<'a> Helper<'a> {
         Ok(self.indent)
     }
 
-    fn scope<T>(
-        &mut self,
-        scope: impl FnOnce(Helper) -> Result<T, fmt::Error>,
-    ) -> Result<String, fmt::Error> {
-        let buffer = take(self.buffer);
-        scope(self.own())?;
-        Ok(replace(self.buffer, buffer))
+    fn scope<F: FnOnce(Helper) -> fmt::Result>(&mut self, scope: F) -> Result<String, fmt::Error> {
+        struct Scope<'a, 'b, 'c, F>(&'c Helper<'a, 'b>, Cell<Option<F>>);
+        impl<F: FnOnce(Helper) -> fmt::Result> fmt::Display for Scope<'_, '_, '_, F> {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                if let Some(scope) = self.1.take() {
+                    scope(self.0.with(f))?;
+                }
+                Ok(())
+            }
+        }
+        Ok(format!("{}", Scope(self, Cell::new(Some(scope)))))
     }
 
     fn names(
@@ -519,7 +614,10 @@ impl<'a> Helper<'a> {
                         |mut helper| helper.write_end(Item::Summary),
                         width,
                     )?;
-                    let buffer = helper.scope(|mut helper| helper.tags(metas))?;
+                    let buffer = helper.scope(|mut helper| {
+                        helper.tags(metas)?;
+                        Ok(())
+                    })?;
                     if width + buffer.len() > helper.style.width() {
                         helper.write_line("")?;
                         width = helper.indentation()?;
@@ -676,7 +774,7 @@ impl<'a> Helper<'a> {
         metas: &[Meta],
         columns: &Columns,
         verb: bool,
-    ) -> Result<Helper, fmt::Error> {
+    ) -> Result<Helper<'_, 'b>, fmt::Error> {
         let item = if verb { Item::Verb } else { Item::Option };
         let mut width = 0;
         let pad = self.style.indent();
@@ -711,7 +809,7 @@ impl<'a> Helper<'a> {
     #[inline]
     fn write(&mut self, value: impl Format) -> Result<usize, fmt::Error> {
         let width = value.width();
-        write!(self.buffer, "{}", Wrap(value))?;
+        value.format(self.format)?;
         Ok(width)
     }
 
@@ -727,8 +825,8 @@ impl<'a> Helper<'a> {
 
     #[inline]
     fn write_line(&mut self, value: impl Format) -> Result<usize, fmt::Error> {
-        let width = value.width();
-        writeln!(self.buffer, "{}", Wrap(value))?;
+        let width = self.write(value)?;
+        writeln!(self.format)?;
         Ok(width)
     }
 
@@ -747,66 +845,16 @@ impl<'a> Helper<'a> {
     }
 }
 
-pub(crate) fn help(root: &Meta, meta: &Meta, path: &[Key]) -> Option<String> {
-    let mut buffer = String::new();
-    let mut writer = Helper {
-        buffer: &mut buffer,
-        path,
-        style: &Termion,
-        indent: 0,
-    };
-    writer.node(root, from_ref(meta), 0).ok()?;
-    Some(buffer)
-}
-
-pub(crate) fn version(meta: &Meta, depth: usize) -> Option<String> {
-    join(meta, depth, |meta| match meta {
-        Meta::Version(version) => Some(Cow::Borrowed(version)),
-        _ => None,
-    })
-}
-
-pub(crate) fn license(meta: &Meta, depth: usize) -> Option<String> {
-    join(meta, depth, |meta| match meta {
-        Meta::License(name, file) => match fs::read_to_string(file.deref()) {
-            Ok(content) => Some(Cow::Owned(content)),
-            Err(_) if file.chars().all(char::is_whitespace) => Some(Cow::Borrowed(name)),
-            Err(_) => Some(Cow::Borrowed(file)),
-        },
-        _ => None,
-    })
-}
-
-pub(crate) fn author(meta: &Meta, depth: usize) -> Option<String> {
-    join(meta, depth, |meta| match meta {
-        Meta::Author(author) => Some(Cow::Borrowed(author)),
-        _ => None,
-    })
-}
-
-fn join(meta: &Meta, depth: usize, find: impl Fn(&Meta) -> Option<Cow<str>>) -> Option<String> {
-    fn descend(
-        meta: &Meta,
-        depth: usize,
-        buffer: &mut String,
-        find: impl Fn(&Meta) -> Option<Cow<str>> + Copy,
-    ) -> fmt::Result {
-        match meta {
-            Meta::Option(metas) | Meta::Verb(metas) | Meta::Group(metas) if depth > 0 => {
-                for meta in metas {
-                    descend(meta, depth - 1, buffer, find)?;
-                }
-            }
-            meta => match find(meta) {
-                Some(value) if buffer.is_empty() => write!(buffer, "{value}")?,
-                Some(value) => write!(buffer, ", {value}")?,
-                None => {}
-            },
+fn join<D: fmt::Display>(
+    write: &mut impl fmt::Write,
+    items: impl IntoIterator<Item = D>,
+) -> fmt::Result {
+    let mut comma = false;
+    for item in items {
+        if replace(&mut comma, true) {
+            write!(write, ", ")?;
         }
-        Ok(())
+        write!(write, "{item}")?;
     }
-
-    let mut buffer = String::new();
-    descend(meta, depth, &mut buffer, &find).ok()?;
-    Some(buffer)
+    Ok(())
 }

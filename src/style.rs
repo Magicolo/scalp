@@ -4,7 +4,7 @@ use self::color::*;
 use std::{
     borrow::Cow,
     fmt::{self, Display},
-    ops::Deref,
+    sync::Arc,
 };
 use termion::{
     color::{Bg, Color, Fg, Rgb},
@@ -12,7 +12,9 @@ use termion::{
     terminal_size,
 };
 
+#[derive(Debug, Clone, Copy)]
 pub struct Termion;
+#[derive(Debug, Clone, Copy)]
 pub struct Plain;
 
 #[derive(Clone, Copy)]
@@ -223,7 +225,7 @@ format!(Faint, 0);
 format!(Italic, 0);
 format!(Underline, 0);
 
-pub trait Style {
+pub trait Style: fmt::Debug + Send + Sync {
     fn indent(&self) -> usize {
         2
     }
@@ -240,23 +242,28 @@ macro_rules! dynamic {
     };
 }
 
-impl<S: Deref + ?Sized> Style for S
-where
-    S::Target: Style,
-{
-    fn indent(&self) -> usize {
-        self.deref().indent()
-    }
-    fn width(&self) -> usize {
-        self.deref().width()
-    }
-    fn begin(&self, item: Item) -> &dyn Format {
-        self.deref().begin(item)
-    }
-    fn end(&self, item: Item) -> &dyn Format {
-        self.deref().end(item)
-    }
+macro_rules! style {
+    ($name: ident, $type: ty) => {
+        impl<$name: Style + ?Sized> Style for $type {
+            fn indent(&self) -> usize {
+                $name::indent(self)
+            }
+            fn width(&self) -> usize {
+                $name::width(self)
+            }
+            fn begin(&self, item: Item) -> &dyn Format {
+                $name::begin(self, item)
+            }
+            fn end(&self, item: Item) -> &dyn Format {
+                $name::end(self, item)
+            }
+        }
+    };
 }
+style!(S, &S);
+style!(S, &mut S);
+style!(S, Box<S>);
+style!(S, Arc<S>);
 
 impl Style for Termion {
     fn width(&self) -> usize {

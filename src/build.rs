@@ -4,9 +4,7 @@ use crate::{
     case::Case,
     error::Error,
     meta::{Meta, Options, Text},
-    parse::{
-        self, Any, At, Default, Environment, Many, Map, Node, Parse, Parser, Require, Value, With,
-    },
+    parse::{self, Any, At, Default, Environment, Many, Map, Node, Parse, Parser, Require, Value},
     scope::{self, Scope},
     stack::Stack,
     style,
@@ -329,7 +327,7 @@ impl<S: scope::Node, P> Builder<S, P> {
     pub fn group<Q>(
         self,
         build: impl FnOnce(Builder<scope::Group, At>) -> Builder<scope::Group, Q>,
-    ) -> Builder<S, P::Push<With<Q>>>
+    ) -> Builder<S, P::Push<Parser<Q>>>
     where
         P: Stack,
     {
@@ -340,7 +338,7 @@ impl<S: scope::Node, P> Builder<S, P> {
     pub fn verb<Q>(
         self,
         build: impl FnOnce(Builder<scope::Verb, At>) -> Builder<scope::Verb, Q>,
-    ) -> Builder<S, P::Push<With<Node<Q>>>>
+    ) -> Builder<S, P::Push<Parser<Node<Q>>>>
     where
         P: Stack,
     {
@@ -351,7 +349,7 @@ impl<S: scope::Node, P> Builder<S, P> {
     pub fn option<T: FromStr + 'static, Q>(
         self,
         build: impl FnOnce(Builder<scope::Option, Value<T>>) -> Builder<scope::Option, Q>,
-    ) -> Builder<S, P::Push<With<Q>>>
+    ) -> Builder<S, P::Push<Parser<Q>>>
     where
         P: Stack,
     {
@@ -366,24 +364,24 @@ impl<S: scope::Node, P> Builder<S, P> {
     }
 }
 
-impl<P: Parse> Parser<With<Node<P>>> {
+impl<P: Parse> Parser<Node<P>> {
     #[inline]
     pub fn verb(
         build: impl FnOnce(Builder<scope::Verb, At>) -> Builder<scope::Verb, P>,
     ) -> Result<Self, Error> {
         let builder = verb(Builder::new(), build);
-        Ok(Self(builder.parse?.0))
+        Ok(builder.parse?.0)
     }
 }
 
-impl<P: Parse> Parser<With<P>> {
+impl<P: Parse> Parser<P> {
     #[inline]
     pub fn group(
         self,
         build: impl FnOnce(Builder<scope::Group, At>) -> Builder<scope::Group, P>,
     ) -> Result<Self, Error> {
         let builder = group(Builder::new(), build);
-        Ok(Self(builder.parse?.0))
+        Ok(builder.parse?.0)
     }
 
     #[inline]
@@ -391,7 +389,7 @@ impl<P: Parse> Parser<With<P>> {
         build: impl FnOnce(Builder<scope::Option, Value<T>>) -> Builder<scope::Option, P>,
     ) -> Result<Self, Error> {
         let builder = option(Builder::new(), build);
-        Ok(Self(builder.parse?.0))
+        Ok(builder.parse?.0)
     }
 }
 
@@ -557,7 +555,7 @@ impl<P> Builder<scope::Option, P> {
 fn group<S: scope::Scope, P, Q>(
     builder: Builder<S, P>,
     build: impl FnOnce(Builder<scope::Group, At>) -> Builder<scope::Group, Q>,
-) -> Builder<S, P::Push<With<Q>>>
+) -> Builder<S, P::Push<Parser<Q>>>
 where
     P: Stack,
 {
@@ -568,11 +566,11 @@ where
     let meta = Meta::from(group);
     builder.scope.push(meta.clone(usize::MAX));
     builder.try_swap_map(prefix, case, |new, prefix, case| {
-        Ok(old?.push(With {
+        Ok(old?.push(Parser {
             parse: new,
-            meta,
-            prefix,
-            case,
+            meta: Arc::new(meta),
+            prefix: Some(prefix),
+            case: Some(case),
         }))
     })
 }
@@ -580,7 +578,7 @@ where
 fn verb<S: scope::Scope, P, Q>(
     builder: Builder<S, P>,
     build: impl FnOnce(Builder<scope::Verb, At>) -> Builder<scope::Verb, Q>,
-) -> Builder<S, P::Push<With<Node<Q>>>>
+) -> Builder<S, P::Push<Parser<Node<Q>>>>
 where
     P: Stack,
 {
@@ -591,11 +589,11 @@ where
     let meta = Meta::from(verb);
     builder.scope.push(meta.clone(1));
     builder.try_swap_map(prefix, case, |new, prefix, case| {
-        Ok(old?.push(With {
+        Ok(old?.push(Parser {
             parse: Node(new),
-            meta,
-            prefix,
-            case,
+            meta: Arc::new(meta),
+            prefix: Some(prefix),
+            case: Some(case),
         }))
     })
 }
@@ -603,7 +601,7 @@ where
 fn option<T: FromStr + 'static, S: scope::Scope, P, Q>(
     builder: Builder<S, P>,
     build: impl FnOnce(Builder<scope::Option, Value<T>>) -> Builder<scope::Option, Q>,
-) -> Builder<S, P::Push<With<Q>>>
+) -> Builder<S, P::Push<Parser<Q>>>
 where
     P: Stack,
 {
@@ -614,11 +612,11 @@ where
     let meta = Meta::from(option);
     builder.scope.push(meta.clone(1));
     builder.try_swap_map(prefix, case, |new, prefix, case| {
-        Ok(old?.push(With {
+        Ok(old?.push(Parser {
             parse: new,
-            meta,
-            prefix,
-            case,
+            meta: Arc::new(meta),
+            prefix: Some(prefix),
+            case: Some(case),
         }))
     })
 }

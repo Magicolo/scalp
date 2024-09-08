@@ -24,7 +24,7 @@ pub enum Text {
     Shared(Arc<str>),
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum Meta {
     Name(Text),
     Position,
@@ -138,6 +138,16 @@ impl Meta {
                 Meta::Group(metas.iter().map(|meta| meta.clone(depth - 1)).collect())
             }
             Meta::Group(_) => Meta::Group(Vec::new()),
+        }
+    }
+
+    pub(crate) fn push(&mut self, meta: Meta) -> bool {
+        match self {
+            Meta::Option(metas) | Meta::Verb(metas) | Meta::Group(metas) => {
+                metas.push(meta);
+                true
+            }
+            _ => false,
         }
     }
 
