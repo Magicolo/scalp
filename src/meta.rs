@@ -1,7 +1,5 @@
-use regex::Regex;
-
-use crate::{parse::Key, style::Style};
 use core::num::NonZeroUsize;
+use regex::Regex;
 use std::{
     borrow::Cow,
     cmp, fmt, hash,
@@ -44,8 +42,6 @@ pub enum Meta {
     Many(Option<NonZeroUsize>),
     Default(Text),
     Environment(Text),
-    Prefix(char),
-    Style(Arc<dyn Style>),
     Show,
     Hide,
     Swizzle,
@@ -75,10 +71,10 @@ impl Options {
     }
 
     pub fn common(short: bool, long: bool) -> impl Iterator<Item = Options> {
-        [
-            Options::Version { short, long },
-            Options::Help { short, long },
-        ]
+        [Options::Version { short, long }, Options::Help {
+            short,
+            long,
+        }]
         .into_iter()
     }
 
@@ -120,8 +116,6 @@ impl Meta {
             Meta::Default(value) => Meta::Default(value.clone()),
             Meta::Environment(value) => Meta::Environment(value.clone()),
             Meta::Valid(value) => Meta::Valid(value.clone()),
-            Meta::Prefix(prefix) => Meta::Prefix(*prefix),
-            Meta::Style(style) => Meta::Style(style.clone()),
             Meta::Hide => Meta::Hide,
             Meta::Show => Meta::Show,
             Meta::Swizzle => Meta::Swizzle,
@@ -141,34 +135,6 @@ impl Meta {
         }
     }
 
-    pub(crate) fn push(&mut self, meta: Meta) -> bool {
-        match self {
-            Meta::Option(metas) | Meta::Verb(metas) | Meta::Group(metas) => {
-                metas.push(meta);
-                true
-            }
-            _ => false,
-        }
-    }
-
-    pub(crate) fn style(metas: &[Meta]) -> Option<&dyn Style> {
-        let control = Self::descend(
-            metas,
-            None,
-            false,
-            0,
-            |state, meta| match meta {
-                Meta::Style(style) => ControlFlow::<(), _>::Continue(Some(style)),
-                _ => ControlFlow::Continue(state),
-            },
-            |state, _| ControlFlow::Continue(state),
-        );
-        match control {
-            ControlFlow::Continue(style) => Some(style?),
-            ControlFlow::Break(_) => None,
-        }
-    }
-
     pub(crate) fn require(&self) -> Option<Text> {
         let control = Self::descend(
             from_ref(self),
@@ -185,45 +151,6 @@ impl Meta {
         );
         match control {
             ControlFlow::Continue(Some(value)) => Some(value.clone()),
-            _ => None,
-        }
-    }
-
-    pub(crate) fn key(&self) -> Option<Key> {
-        let control = Self::descend(
-            from_ref(self),
-            (None, None, None, None::<&usize>, false),
-            false,
-            1,
-            |state, meta| {
-                ControlFlow::<(), _>::Continue(match meta {
-                    Meta::Verb(_) | Meta::Option(_) => (state.0, state.1, state.2, state.3, true),
-                    Meta::Group(_) => (state.0, state.1, state.2, state.3, false),
-                    Meta::Name(value) if state.4 => match prefix(value) {
-                        Prefix::None => {
-                            (state.0.or(Some(value)), state.1, state.2, state.3, state.4)
-                        }
-                        Prefix::Short => {
-                            (state.0, state.1.or(Some(value)), state.2, state.3, state.4)
-                        }
-                        Prefix::Long => {
-                            (state.0, state.1, state.2.or(Some(value)), state.3, state.4)
-                        }
-                    },
-                    // TODO: Fix this...
-                    // Meta::Position(value) if state.4 => {
-                    //     (state.0, state.1, state.2, state.3.or(Some(value)), state.4)
-                    // }
-                    _ => state,
-                })
-            },
-            |state, _| ControlFlow::Continue(state),
-        );
-        match control {
-            ControlFlow::Continue((Some(value), _, _, _, _)) => Some(Key::Name(value.clone())),
-            ControlFlow::Continue((_, Some(value), _, _, _)) => Some(Key::Name(value.clone())),
-            ControlFlow::Continue((_, _, Some(value), _, _)) => Some(Key::Name(value.clone())),
-            ControlFlow::Continue((_, _, _, Some(value), _)) => Some(Key::Index(*value)),
             _ => None,
         }
     }
@@ -259,15 +186,17 @@ impl Meta {
         metas: impl IntoIterator<Item = &'a Meta>,
     ) -> impl Iterator<Item = &'a Meta> {
         let mut metas = metas.into_iter();
-        from_fn(move || loop {
-            let meta = metas.next()?;
-            match meta {
-                Meta::Hide => loop {
-                    if let Meta::Show = metas.next()? {
-                        break;
-                    }
-                },
-                meta => return Some(meta),
+        from_fn(move || {
+            loop {
+                let meta = metas.next()?;
+                match meta {
+                    Meta::Hide => loop {
+                        if let Meta::Show = metas.next()? {
+                            break;
+                        }
+                    },
+                    meta => return Some(meta),
+                }
             }
         })
     }

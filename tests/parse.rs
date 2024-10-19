@@ -252,23 +252,11 @@ fn parses_enum_value() -> Result {
         panic!()
     };
     assert_eq!(value.as_str(), "same");
-    assert_eq!(
-        patterns,
-        ["c(amel-case)?", "p(ascal-case)?", "s(nake-case)?"]
-    );
+    assert_eq!(patterns, [
+        "c(amel-case)?",
+        "p(ascal-case)?",
+        "s(nake-case)?"
+    ]);
     assert_eq!(path, vec!["c".into()]);
     Ok(())
 }
-
-// #[test]
-// fn boba() {
-//     Builder::option()
-//         .name("boba")
-//         .parse::<String>()
-//         .build();
-//     Builder::verb()
-//         .name("fett")
-//         .option();
-//     Builder::group()
-//         .name("jango");
-// }

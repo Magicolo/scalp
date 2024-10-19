@@ -1,41 +1,37 @@
 use crate::{
+    Options,
     case::Case,
     error::Error,
     help,
     meta::{Meta, Text},
     spell::Spell,
     stack::Stack,
-    style::Format,
-    Options, MASK, SHIFT,
+    style::{Format, Style, Termion},
 };
 use core::{cmp::min, marker::PhantomData, num::NonZeroUsize};
 use orn::*;
 use regex::Regex;
 use std::{
+    any::{self, TypeId},
     collections::{HashMap, VecDeque},
-    fmt,
+    fmt::{self, Write},
     mem::take,
     ops::ControlFlow,
     str::FromStr,
     sync::Arc,
 };
 
-pub(crate) const CASE: Case = Case::Kebab { upper: false };
-pub(crate) const PREFIX: char = '-';
-pub(crate) const TAG: &str = "true";
-
-// TODO: Allow for non-static Cows by carrying another lifetime parameter.
 pub struct Context<'a> {
     arguments: &'a mut VecDeque<Argument>,
     environment: &'a mut HashMap<Text, Text>,
-    swizzles: &'a mut Vec<char>,
     path: &'a mut Vec<Key>,
     names: &'a mut Vec<Name>,
+    indices: &'a mut Vec<usize>,
     root: Arc<Meta>,
     meta: Arc<Meta>,
+    style: Arc<dyn Style>,
     case: Case,
     prefix: char,
-    index: Option<usize>,
 }
 
 #[derive(Clone)]
@@ -44,16 +40,14 @@ pub struct Parser<P> {
     pub(crate) meta: Arc<Meta>,
     pub(crate) prefix: Option<char>,
     pub(crate) case: Option<Case>,
+    pub(crate) style: Option<Arc<dyn Style>>,
 }
 
 #[derive(Clone)]
 pub struct Node<P>(pub(crate) P);
 
 #[derive(Default)]
-pub struct Value<T> {
-    pub(crate) tag: Option<Text>,
-    pub(crate) _marker: PhantomData<T>,
-}
+pub struct Value<T>(pub(crate) PhantomData<T>);
 
 pub struct Many<P, I, N, F> {
     pub(crate) parse: P,
@@ -76,8 +70,8 @@ pub struct At<P = ()>(pub(crate) P);
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Key {
-    Index(usize),
-    Name(Text),
+    Position(usize),
+    Name(Name),
 }
 
 enum Argument {
@@ -85,18 +79,26 @@ enum Argument {
     Swizzle(char),
 }
 
-struct Name(Text, Option<Case>);
+#[derive(Debug, Clone, PartialEq)]
+struct Name {
+    value: Text,
+    prefixes: (Option<char>, Option<char>),
+    case: Option<Case>,
+}
 
 struct KeyFinder<'a> {
-    key: &'a str,
+    argument: &'a Argument,
+    arguments: &'a mut VecDeque<Argument>,
     metas: &'a [Meta],
     names: &'a mut Vec<Name>,
-    case: Option<Case>,
+    indices: &'a mut Vec<usize>,
+    count: &'a mut usize,
+    prefix: char,
+    case: Case,
     verb: bool,
     option: bool,
-    r#break: bool,
-    swizzle: bool,
     position: usize,
+    swizzle: bool,
     root: bool,
 }
 
@@ -105,8 +107,8 @@ enum KeyResult {
     Version,
     Author,
     License,
-    Index(usize),
-    Name(Text, usize),
+    Position(usize),
+    Name(Name),
     Break(bool),
     Error(Error),
     Unrecognized,
@@ -124,12 +126,60 @@ pub trait Any<T> {
     fn any(self) -> Option<T>;
 }
 
+impl Name {
+    pub fn len(&self, prefix: bool, case: bool) -> usize {
+        self.chars(prefix, case).count()
+    }
+
+    pub fn chars(&self, prefix: bool, case: bool) -> impl Iterator<Item = char> + '_ {
+        self.case.filter(|_| case).unwrap_or(Case::Same).convert(
+            self.prefixes
+                .0
+                .filter(|_| prefix)
+                .into_iter()
+                .chain(self.prefixes.1.filter(|_| prefix))
+                .chain(self.value.chars()),
+        )
+    }
+}
+
+impl Argument {
+    pub fn chars(&self) -> impl Iterator<Item = char> + '_ {
+        use or2::Or;
+        match self {
+            Argument::String(key) => Or::T0(key.chars()),
+            Argument::Swizzle(key) => Or::T1([*key]),
+        }
+        .into_iter()
+        .map(Or::into)
+    }
+}
+
+impl Format for Name {
+    fn width(&self) -> usize {
+        self.len(true, true)
+    }
+
+    fn format(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(self, f)
+    }
+}
+
+impl fmt::Display for Name {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for character in self.chars(true, true) {
+            f.write_char(character)?;
+        }
+        Ok(())
+    }
+}
+
 impl Format for Key {
     fn width(&self) -> usize {
         match self {
-            Key::Index(position) if *position < 10 => 3,
-            Key::Index(_) => 4,
-            Key::Name(name) => name.len(),
+            Key::Position(position) if *position < 10 => 3,
+            Key::Position(_) => 4,
+            Key::Name(name) => name.width(),
         }
     }
 
@@ -141,36 +191,19 @@ impl Format for Key {
 impl fmt::Display for Key {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Key::Index(position) => write!(f, "[{}]", position),
+            Key::Position(position) => write!(f, "[{}]", position),
             Key::Name(name) => write!(f, "{}", name),
         }
     }
 }
 
-impl From<&'static str> for Key {
-    fn from(name: &'static str) -> Self {
-        Key::Name(name.into())
-    }
-}
-
-impl From<String> for Key {
-    fn from(name: String) -> Self {
-        Key::Name(name.into())
-    }
-}
-
-impl From<usize> for Key {
-    fn from(position: usize) -> Self {
-        Key::Index(position)
-    }
-}
-
 impl<T: Stack> Stack for At<T> {
-    const COUNT: usize = T::COUNT;
-    type Push<U> = At<T::Push<U>>;
-    type Pop = At<T::Pop>;
     type Clear = At<T::Clear>;
     type Item = T::Item;
+    type Pop = At<T::Pop>;
+    type Push<U> = At<T::Push<U>>;
+
+    const COUNT: usize = T::COUNT;
 
     fn push<U>(self, item: U) -> Self::Push<U> {
         At(self.0.push(item))
@@ -191,109 +224,39 @@ impl<'a> Context<'a> {
         Context {
             arguments: self.arguments,
             environment: self.environment,
-            swizzles: self.swizzles,
             path: self.path,
             names: self.names,
             prefix: self.prefix,
             root: self.root.clone(),
             case: self.case,
             meta: self.meta.clone(),
-            index: self.index,
+            indices: self.indices,
+            style: self.style.clone(),
         }
     }
 
-    fn key(&mut self, position: usize) -> Result<Option<(Key, usize)>, Error> {
-        self.index = None;
-        self.names.clear();
+    fn key(&mut self, position: &mut usize) -> Result<Option<Key>, Error> {
         let Some(argument) = self.arguments.pop_front() else {
             return Ok(None);
         };
-        let metas = self.meta.children();
-        let result = match &argument {
-            Argument::String(key) => {
-                let mut characters = key.chars();
-                match characters.next() {
-                    Some(first) if first == self.prefix => match characters.next() {
-                        Some(second) if second == self.prefix => KeyFinder {
-                            key: &key[first.len_utf8() + second.len_utf8()..],
-                            names: self.names,
-                            case: Some(self.case),
-                            verb: false,
-                            option: true,
-                            r#break: true,
-                            metas,
-                            position: usize::MAX,
-                            swizzle: false,
-                            root: true,
-                        }
-                        .find(),
-                        Some(second) => {
-                            let mut swizzle = false;
-                            for character in characters.rev() {
-                                self.arguments.push_front(Argument::Swizzle(character));
-                                swizzle = true;
-                            }
-                            KeyFinder {
-                                key: &key[first.len_utf8()..first.len_utf8() + second.len_utf8()],
-                                names: self.names,
-                                case: None,
-                                verb: false,
-                                option: true,
-                                r#break: false,
-                                metas,
-                                position: usize::MAX,
-                                swizzle,
-                                root: true,
-                            }
-                            .find()
-                        }
-                        None => KeyResult::Error(Error::EmptyShortOption),
-                    },
-                    Some(_) => match characters.next() {
-                        Some(_) => KeyFinder {
-                            key,
-                            names: self.names,
-                            case: Some(self.case),
-                            verb: true,
-                            option: false,
-                            r#break: false,
-                            metas,
-                            position,
-                            swizzle: false,
-                            root: true,
-                        }
-                        .find(),
-                        None => KeyFinder {
-                            key,
-                            names: self.names,
-                            case: None,
-                            verb: true,
-                            option: false,
-                            r#break: false,
-                            metas,
-                            position,
-                            swizzle: false,
-                            root: true,
-                        }
-                        .find(),
-                    },
-                    None => KeyResult::Error(Error::EmptyArgument),
-                }
-            }
-            Argument::Swizzle(key) => KeyFinder {
-                key: key.encode_utf8(&mut [0; 4]),
-                names: self.names,
-                case: None,
-                verb: false,
-                option: true,
-                r#break: false,
-                metas,
-                position: usize::MAX,
-                swizzle: true,
-                root: true,
-            }
-            .find(),
-        };
+        self.indices.clear();
+        self.names.clear();
+        let result = KeyFinder {
+            argument: &argument,
+            arguments: &mut self.arguments,
+            metas: self.meta.children(),
+            names: self.names,
+            indices: self.indices,
+            count: &mut 0,
+            prefix: self.prefix,
+            case: self.case,
+            verb: false,
+            option: false,
+            swizzle: false,
+            position: *position,
+            root: true,
+        }
+        .find();
 
         match result {
             KeyResult::Help => Err(Error::Help(None)),
@@ -307,10 +270,11 @@ impl<'a> Context<'a> {
                 Ok(None)
             }
             KeyResult::Error(error) => Err(error),
-            KeyResult::Name(name, index) => Ok(Some((Key::Name(name), index))),
-            KeyResult::Index(index) => {
+            KeyResult::Name(name) => Ok(Some(Key::Name(name))),
+            KeyResult::Position(index) => {
                 self.arguments.push_front(argument);
-                Ok(Some((Key::Index(index), index)))
+                *position += 1;
+                Ok(Some(Key::Position(index)))
             }
             KeyResult::Unrecognized => {
                 let key = match argument {
@@ -319,13 +283,9 @@ impl<'a> Context<'a> {
                 };
                 let suggestions = Spell::new().suggest(
                     &key,
-                    self.names.iter().map(|name| match name.1 {
-                        Some(case) => [self.prefix, self.prefix]
-                            .into_iter()
-                            .chain(case.convert(name.0.chars()))
-                            .collect(),
-                        None => [self.prefix].into_iter().chain(name.0.chars()).collect(),
-                    }),
+                    self.names
+                        .iter()
+                        .map(|name| name.chars(true, true).collect()),
                     min(key.len() / 3, 3),
                 );
                 Err(Error::UnrecognizedArgument(key, suggestions))
@@ -336,13 +296,14 @@ impl<'a> Context<'a> {
     fn fill(self, error: Error) -> Error {
         match error {
             Error::Help(None) => Error::Help(Some(help::Help {
-                root: self.root.clone(),
-                meta: self.meta.clone(),
+                root: self.root,
+                meta: self.meta,
+                style: self.style,
                 path: take(self.path),
             })),
-            Error::Version(None) => Error::Version(Some(help::Version(self.meta.clone()))),
-            Error::License(None) => Error::License(Some(help::License(self.meta.clone()))),
-            Error::Author(None) => Error::Author(Some(help::Author(self.meta.clone()))),
+            Error::Version(None) => Error::Version(Some(help::Version(self.meta))),
+            Error::License(None) => Error::License(Some(help::License(self.meta))),
+            Error::Author(None) => Error::Author(Some(help::Author(self.meta))),
             _ => error,
         }
     }
@@ -407,7 +368,7 @@ impl<'a> Context<'a> {
     fn missing_required(self) -> Error {
         let path = take(self.path);
         if let Meta::Option(_) = self.meta.as_ref() {
-            Error::MissingRequiredOption(path, self.meta.key())
+            Error::MissingRequiredOption(path)
         } else {
             Error::MissingRequiredValue(path, self.meta.require())
         }
@@ -439,13 +400,13 @@ impl<'a> Context<'a> {
         name.cloned()
     }
 
-    fn at(&mut self, index: usize) -> Context {
-        let mut state = self.own();
-        state.index = Some(index);
-        state
-    }
-
-    fn with(&mut self, meta: Arc<Meta>, prefix: Option<char>, case: Option<Case>) -> Context {
+    fn with<'b>(
+        &'b mut self,
+        meta: Arc<Meta>,
+        prefix: Option<char>,
+        case: Option<Case>,
+        style: Option<Arc<dyn Style>>,
+    ) -> Context {
         let mut context = self.own();
         context.meta = meta;
         if let Some(prefix) = prefix {
@@ -454,52 +415,140 @@ impl<'a> Context<'a> {
         if let Some(case) = case {
             context.case = case;
         }
+        if let Some(style) = style {
+            context.style = style;
+        }
         context
     }
 }
 
 impl<P> Parser<P> {
+    fn new(parse: P, meta: Meta) -> Self {
+        Self {
+            parse,
+            meta: Arc::new(meta),
+            prefix: None,
+            case: None,
+            style: None,
+        }
+    }
+
     #[inline]
-    pub fn case(mut self, case: Case) -> Self {
+    pub const fn case(mut self, case: Case) -> Self {
         self.case = Some(case);
         self
     }
 
     #[inline]
-    pub fn prefix(mut self, prefix: char) -> Self {
+    pub const fn prefix(mut self, prefix: char) -> Self {
         self.prefix = Some(prefix);
         self
     }
 
     #[inline]
-    pub fn verbz<Q>(mut self, parser: Parser<Q>) -> Parser<P::Push<Parser<Node<Q>>>>
+    pub fn style<S: Style + 'static>(mut self, style: S) -> Self {
+        self.style = Some(Arc::new(style));
+        self
+    }
+
+    pub fn name(mut self, name: impl Into<Text>) -> Result<Self, Error> {
+        self.with_meta(|meta| match meta {
+            Meta::Option(metas) => {
+                let name = name.into();
+                if name
+                    .chars()
+                    .any(|letter| letter.is_whitespace() || !letter.is_ascii())
+                {
+                    Err(Error::InvalidOptionName(name))
+                } else {
+                    metas.push(Meta::Name(name));
+                    Ok(())
+                }
+            }
+            Meta::Verb(metas) => {
+                let name = name.into();
+                if name
+                    .chars()
+                    .any(|letter| letter.is_whitespace() || !letter.is_ascii())
+                {
+                    Err(Error::InvalidVerbName(name))
+                } else {
+                    metas.push(Meta::Name(name));
+                    Ok(())
+                }
+            }
+            Meta::Group(metas) => {
+                let name = name.into();
+                if name.chars().all(char::is_whitespace) {
+                    Err(Error::InvalidGroupName(name))
+                } else {
+                    metas.push(Meta::Name(name));
+                    Ok(())
+                }
+            }
+            _ => Err(Error::InvalidLeafMeta(Clone::clone(meta))),
+        })?;
+        Ok(self)
+    }
+
+    #[inline]
+    pub fn child<Q>(self, parser: Parser<Q>) -> Parser<P::Push<Parser<Q>>>
     where
         P: Stack,
     {
-        self.push(parser.meta.as_ref().clone(0));
-        self.map(|parse| parse.push(parser.map(Node)))
+        self.meta(parser.meta.as_ref().clone(0))
+            .map(|parse| parse.push(parser))
     }
 
-    fn map<Q>(self, map: impl FnOnce(P) -> Q) -> Parser<Q> {
+    pub fn map<Q>(self, map: impl FnOnce(P) -> Q) -> Parser<Q> {
         Parser {
             parse: map(self.parse),
             meta: self.meta,
             prefix: self.prefix,
             case: self.case,
+            style: self.style,
         }
     }
 
-    fn push(&mut self, meta: Meta) {
+    pub fn meta(mut self, meta: Meta) -> Self {
+        self.with_metas(|metas| metas.push(meta));
+        self
+    }
+
+    fn with_meta<T>(&mut self, with: impl FnOnce(&mut Meta) -> T) -> T {
         match Arc::get_mut(&mut self.meta) {
-            Some(target) => {
-                target.push(meta);
-            }
+            Some(meta) => with(meta),
             None => {
-                let mut target: Meta = Clone::clone(self.meta.as_ref());
-                target.push(meta);
-                self.meta = Arc::new(target);
+                let mut meta = Clone::clone(self.meta.as_ref());
+                let value = with(&mut meta);
+                self.meta = Arc::new(meta);
+                value
             }
         }
+    }
+
+    fn with_metas<T>(&mut self, with: impl FnOnce(&mut Vec<Meta>) -> T) -> Option<T> {
+        self.with_meta(|meta| match meta {
+            Meta::Verb(metas) | Meta::Group(metas) | Meta::Option(metas) => Some(with(metas)),
+            _ => None,
+        })
+    }
+}
+
+impl Parser<At> {
+    pub fn verb() -> Self {
+        Parser::new(At(()), Meta::Verb(Vec::new()))
+    }
+
+    pub fn group() -> Self {
+        Parser::new(At(()), Meta::Group(Vec::new()))
+    }
+}
+
+impl<T: FromStr + 'static> Parser<Value<T>> {
+    pub fn option() -> Self {
+        Parser::new(Value(PhantomData), Meta::Option(Vec::new()))
+            .meta(Meta::Type(type_name::<T>().into()))
     }
 }
 
@@ -527,21 +576,18 @@ impl<T, P: Parse<Value = Option<T>>> Parser<P> {
         let mut context = Context {
             arguments: &mut arguments,
             environment: &mut environment,
-            swizzles: &mut Vec::new(),
             path: &mut Vec::new(),
             names: &mut Vec::new(),
-            index: None,
-            prefix: self.prefix.unwrap_or(PREFIX),
-            case: self.case.unwrap_or(CASE),
+            indices: &mut Vec::new(),
+            prefix: self.prefix.unwrap_or('-'),
+            case: self.case.unwrap_or(Case::Kebab { upper: false }),
+            style: self.style.clone().unwrap_or_else(|| Arc::new(Termion)),
             root: self.meta.clone(),
             meta: self.meta.clone(),
         };
-        let state = self.parse.initialize(context.own())?;
-        let state = self.parse.parse(state, context.own())?;
-        let value = self
-            .parse
-            .finalize(state, context)?
-            .ok_or(Error::FailedToParseArguments)?;
+        let state = Parse::initialize(self, context.own())?;
+        let state = Parse::parse(self, state, context.own())?;
+        let value = Parse::finalize(self, state, context)?.ok_or(Error::FailedToParseArguments)?;
         if arguments.is_empty() {
             Ok(value)
         } else {
@@ -633,12 +679,9 @@ impl<P: Parse> Parse for Node<P> {
 
         let mut outer: <P as Parse>::State = self.0.initialize(context.own())?;
         let mut position = 0;
-        while let Some((key, index)) = context.key(position)? {
-            if let Key::Index(_) = key {
-                position += 1;
-            }
+        while let Some(key) = context.key(&mut position)? {
             context.path.push(key);
-            outer = self.0.parse(outer, context.at(index))?;
+            outer = self.0.parse(outer, context.own())?;
             context.path.pop();
         }
         Ok(Some(self.0.finalize(outer, context.own())?))
@@ -656,32 +699,52 @@ fn trim_pattern(pattern: &Regex) -> &str {
         .trim_end_matches('$')
 }
 
+fn type_name<T: 'static>() -> &'static str {
+    macro_rules! is {
+        ($left: expr $(, $rights: ident)+) => {
+            $($left == TypeId::of::<$rights>() || $left == TypeId::of::<Option<$rights>>() ||)+ false
+        };
+    }
+
+    let identifier = TypeId::of::<T>();
+    if is!(identifier, bool) {
+        "boolean"
+    } else if is!(identifier, u8, u16, u32, u64, u128, usize) {
+        "natural number"
+    } else if is!(identifier, i8, i16, i32, i64, i128, isize) {
+        "integer number"
+    } else if is!(identifier, f32, f64) {
+        "rational number"
+    } else {
+        let mut name = any::type_name::<T>();
+        if let Some(split) = name.split('<').next() {
+            name = split;
+        }
+        if let Some(split) = name.split(':').last() {
+            name = split;
+        }
+        name
+    }
+}
+
 impl KeyFinder<'_> {
     fn find(mut self) -> KeyResult {
-        let mut index = 0;
         let mut help = None;
         let mut version = None;
-        let mut position = Err(self.position);
-        if let ControlFlow::Break(result) =
-            self.with(self.metas, true)
-                .descend(&mut index, &mut help, &mut version, &mut position)
+        if let ControlFlow::Break(result) = self
+            .with(self.metas, false, false, true)
+            .descend(&mut help, &mut version)
         {
             return result;
         }
-        if let Ok(position) = position {
-            return KeyResult::Index(position);
-        }
-        if self.r#break && self.key.is_empty() && index > 0 {
-            return KeyResult::Break(false);
-        }
         if self.option {
             if let Some(true) = help {
-                if self.is("h", None) || self.is("help", self.case) {
+                if self.is_help(true, true) {
                     return KeyResult::Help;
                 }
             }
             if let Some(true) = version {
-                if self.is("v", None) || self.is("version", self.case) {
+                if self.is_version(true, true) {
                     return KeyResult::Version;
                 }
             }
@@ -693,107 +756,287 @@ impl KeyFinder<'_> {
         }
     }
 
-    #[inline]
-    fn is(&mut self, name: impl Into<Text>, case: Option<Case>) -> bool {
-        let name = name.into();
-        let is = match case {
-            Some(case) => self.key.chars().eq(case.convert(name.chars())),
-            None => self.key == name.as_str(),
-        };
-        self.names.push(Name(name, case));
-        is
+    fn is_name(&mut self, name: Name, key: impl IntoIterator<Item = char>) -> Option<Name> {
+        if name.chars(false, true).eq(key) {
+            Some(name)
+        } else {
+            self.names.push(name);
+            None
+        }
     }
 
-    fn with<'a>(&'a mut self, metas: &'a [Meta], root: bool) -> KeyFinder<'a> {
+    fn is_short_option(
+        &mut self,
+        name: impl Into<Text>,
+        key: impl IntoIterator<Item = char>,
+    ) -> Option<Name> {
+        let name = Name {
+            value: name.into(),
+            prefixes: (Some(self.prefix), None),
+            case: None,
+        };
+        self.is_name(name, key)
+    }
+
+    fn is_long_option(
+        &mut self,
+        name: impl Into<Text>,
+        key: impl IntoIterator<Item = char>,
+    ) -> Option<Name> {
+        let name = Name {
+            value: name.into(),
+            prefixes: (Some(self.prefix), Some(self.prefix)),
+            case: Some(self.case),
+        };
+        self.is_name(name, key)
+    }
+
+    fn is_short_verb(
+        &mut self,
+        name: impl Into<Text>,
+        key: impl IntoIterator<Item = char>,
+    ) -> Option<Name> {
+        let name = Name {
+            value: name.into(),
+            prefixes: (None, None),
+            case: None,
+        };
+        self.is_name(name, key)
+    }
+
+    fn is_long_verb(
+        &mut self,
+        name: impl Into<Text>,
+        key: impl IntoIterator<Item = char>,
+    ) -> Option<Name> {
+        let name = Name {
+            value: name.into(),
+            prefixes: (None, None),
+            case: Some(self.case),
+        };
+        self.is_name(name, key)
+    }
+
+    fn is_options(
+        &mut self,
+        short: Option<impl Into<Text>>,
+        long: Option<impl Into<Text>>,
+    ) -> bool {
+        if let Some(short) = short {
+            if self.is_short_option(short, self.argument.chars()).is_some() {
+                return true;
+            }
+        }
+        if let Some(long) = long {
+            if self.is_long_option(long, self.argument.chars()).is_some() {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn is_help(&mut self, short: bool, long: bool) -> bool {
+        self.is_options(Some("h").filter(|_| short), Some("help").filter(|_| long))
+    }
+
+    fn is_version(&mut self, short: bool, long: bool) -> bool {
+        self.is_options(
+            Some("v").filter(|_| short),
+            Some("version").filter(|_| long),
+        )
+    }
+
+    fn is_author(&mut self, short: bool, long: bool) -> bool {
+        self.is_options(Some("a").filter(|_| short), Some("author").filter(|_| long))
+    }
+
+    fn is_license(&mut self, short: bool, long: bool) -> bool {
+        self.is_options(
+            Some("l").filter(|_| short),
+            Some("license").filter(|_| long),
+        )
+    }
+
+    fn with<'a>(
+        &'a mut self,
+        metas: &'a [Meta],
+        option: bool,
+        verb: bool,
+        root: bool,
+    ) -> KeyFinder<'a> {
         KeyFinder {
-            key: self.key,
+            argument: self.argument,
+            arguments: self.arguments,
             names: self.names,
+            indices: self.indices,
+            prefix: self.prefix,
             case: self.case,
-            verb: self.verb,
-            option: self.option,
-            r#break: self.r#break,
-            metas,
             position: self.position,
             swizzle: self.swizzle,
+            count: self.count,
+            verb,
+            option,
+            metas,
             root,
         }
     }
 
+    fn swizzles(&self, index: usize) -> bool {
+        self.swizzle
+            || self.metas[index..]
+                .iter()
+                .any(|meta| matches!(meta, Meta::Swizzle))
+    }
+
     fn descend(
-        mut self,
-        index: &mut usize,
+        &mut self,
         help: &mut Option<bool>,
         version: &mut Option<bool>,
-        position: &mut Result<usize, usize>,
     ) -> ControlFlow<KeyResult> {
+        use ControlFlow::*;
+
+        let mut at = 0;
         for (i, meta) in self.metas.iter().enumerate() {
-            match (meta, self.root) {
-                (Meta::Position, false, ..) if *position == Err(*index) => *position = Ok(*index),
-                (Meta::Help(_), ..)
-                | (Meta::Usage(_), ..)
-                | (Meta::Note(_), ..)
-                | (Meta::Repository(_), ..)
-                | (Meta::Summary(_), ..) => *help = help.or(Some(true)),
-                (Meta::Version(_), ..) => *version = version.or(Some(true)),
-                (Meta::Name(name), false) if self.is(name.clone(), self.case) => {
-                    if self.swizzle {
-                        let has = self.metas[i + 1..]
-                            .iter()
-                            .any(|meta| matches!(meta, Meta::Swizzle));
-                        if !has {
-                            return ControlFlow::Break(KeyResult::Error(
-                                Error::InvalidSwizzleOption(name.clone()),
-                            ));
+            match meta {
+                Meta::Help(_)
+                | Meta::Usage(_)
+                | Meta::Note(_)
+                | Meta::Repository(_)
+                | Meta::Summary(_) => *help = help.or(Some(true)),
+                Meta::Version(_) => *version = version.or(Some(true)),
+                Meta::Position if !self.root => {
+                    if *self.count == self.position {
+                        return Break(KeyResult::Position(self.position));
+                    } else {
+                        *self.count += 1;
+                    }
+                }
+                Meta::Name(name) if !self.root => {
+                    match self.argument {
+                        Argument::String(key) => {
+                            let mut characters = key.chars();
+                            match characters.next() {
+                                Some(first) if self.option && first == self.prefix => {
+                                    match characters.next() {
+                                        Some(second) if second == self.prefix => {
+                                            match characters.next() {
+                                                // Long option.
+                                                Some(third) => {
+                                                    if let Some(name) = self.is_long_option(
+                                                        name.clone(),
+                                                        [third].into_iter().chain(characters),
+                                                    ) {
+                                                        return Break(KeyResult::Name(name));
+                                                    }
+                                                }
+                                                // Break.
+                                                // To produce `Break` from `--`, there must be at
+                                                // least an option or verb with a name
+                                                // defined so it is fine to make this check here.
+                                                None => return Break(KeyResult::Break(false)),
+                                            }
+                                        }
+                                        // Short option.
+                                        Some(second) => {
+                                            if let Some(name) =
+                                                self.is_short_option(name.clone(), [second])
+                                            {
+                                                let mut single = true;
+                                                for character in characters.rev() {
+                                                    self.arguments
+                                                        .push_front(Argument::Swizzle(character));
+                                                    single = false;
+                                                }
+                                                if single || self.swizzles(i) {
+                                                    return Break(KeyResult::Name(name));
+                                                } else {
+                                                    return Break(KeyResult::Error(
+                                                        Error::InvalidSwizzleOption(
+                                                            name.value.clone(),
+                                                        ),
+                                                    ));
+                                                }
+                                            }
+                                        }
+                                        None => return Break(KeyResult::Unrecognized),
+                                    }
+                                }
+                                Some(first) if self.verb => match characters.next() {
+                                    // Long verb.
+                                    Some(second) => {
+                                        if let Some(name) = self.is_long_verb(
+                                            name.clone(),
+                                            [first, second].into_iter().chain(characters),
+                                        ) {
+                                            return Break(KeyResult::Name(name));
+                                        }
+                                    }
+                                    // Short verb.
+                                    None => {
+                                        if let Some(name) =
+                                            self.is_short_verb(name.clone(), [first])
+                                        {
+                                            return Break(KeyResult::Name(name));
+                                        }
+                                    }
+                                },
+                                _ => {}
+                            }
+                        }
+                        Argument::Swizzle(key) => {
+                            if let Some(name) = self.is_short_option(name.clone(), [*key]) {
+                                if self.swizzles(i) {
+                                    return Break(KeyResult::Name(name));
+                                } else {
+                                    return Break(KeyResult::Error(Error::InvalidSwizzleOption(
+                                        name.value.clone(),
+                                    )));
+                                }
+                            }
                         }
                     }
-                    return ControlFlow::Break(KeyResult::Name(name.clone(), *index));
                 }
-                (Meta::Swizzle, ..) => self.swizzle = false,
-                (Meta::Group(metas), true) => {
-                    self.with(metas, self.root)
-                        .descend(index, help, version, position)?;
+                Meta::Swizzle => self.swizzle = true,
+                Meta::Group(metas) => {
+                    self.indices.push(at);
+                    self.with(metas, self.option, self.verb, self.root)
+                        .descend(help, version)?;
+                    self.indices.pop();
+                    at += 1;
                 }
-                (Meta::Verb(metas), true) => {
+                Meta::Verb(metas) if self.root => {
                     if self.verb {
-                        self.with(metas, false)
-                            .descend(index, help, version, position)?;
+                        self.indices.push(at);
+                        self.with(metas, false, true, false)
+                            .descend(help, version)?;
+                        self.indices.pop();
                     }
-                    *index += 1;
+                    at += 1;
                     *help = help.or(Some(true));
                 }
-                (Meta::Option(metas), true) => {
+                Meta::Option(metas) if self.root => {
                     if self.option {
-                        self.with(metas, false)
-                            .descend(index, help, version, position)?;
+                        self.indices.push(at);
+                        self.with(metas, true, false, false)
+                            .descend(help, version)?;
+                        self.indices.pop();
                     }
-                    *index += 1;
+                    at += 1;
                     *help = help.or(Some(true));
                 }
-                (Meta::Options(options), true) if self.option => {
+                Meta::Options(options) if self.root => {
                     match options {
-                        Options::Help { short: true, .. } if self.is("h", None) => {
-                            return ControlFlow::Break(KeyResult::Help);
+                        Options::Help { short, long } if self.is_help(*short, *long) => {
+                            return Break(KeyResult::Help);
                         }
-                        Options::Help { long: true, .. } if self.is("help", self.case) => {
-                            return ControlFlow::Break(KeyResult::Help);
+                        Options::Version { short, long } if self.is_version(*short, *long) => {
+                            return Break(KeyResult::Version);
                         }
-                        Options::Version { short: true, .. } if self.is("v", None) => {
-                            return ControlFlow::Break(KeyResult::Version);
+                        Options::Author { short, long } if self.is_author(*short, *long) => {
+                            return Break(KeyResult::Author);
                         }
-                        Options::Version { long: true, .. } if self.is("version", self.case) => {
-                            return ControlFlow::Break(KeyResult::Version);
-                        }
-                        Options::Author { short: true, .. } if self.is("a", None) => {
-                            return ControlFlow::Break(KeyResult::Author);
-                        }
-                        Options::Author { long: true, .. } if self.is("author", self.case) => {
-                            return ControlFlow::Break(KeyResult::Author);
-                        }
-                        Options::License { short: true, .. } if self.is("l", None) => {
-                            return ControlFlow::Break(KeyResult::License);
-                        }
-                        Options::License { long: true, .. } if self.is("license", self.case) => {
-                            return ControlFlow::Break(KeyResult::License);
+                        Options::License { short, long } if self.is_license(*short, *long) => {
+                            return Break(KeyResult::License);
                         }
                         _ => {}
                     }
@@ -803,6 +1046,7 @@ impl KeyFinder<'_> {
                 _ => {}
             }
         }
+
         ControlFlow::Continue(())
     }
 }
@@ -812,7 +1056,12 @@ impl<P: Parse> Parse for Parser<P> {
     type Value = P::Value;
 
     fn initialize(&self, mut context: Context) -> Result<Self::State, Error> {
-        let mut context = context.with(self.meta.clone(), self.prefix, self.case);
+        let mut context = context.with(
+            self.meta.clone(),
+            self.prefix,
+            self.case,
+            self.style.clone(),
+        );
         match self.parse.initialize(context.own()) {
             Ok(state) => Ok(state),
             Err(error) => Err(context.fill(error)),
@@ -820,7 +1069,12 @@ impl<P: Parse> Parse for Parser<P> {
     }
 
     fn parse(&self, state: Self::State, mut context: Context) -> Result<Self::State, Error> {
-        let mut context = context.with(self.meta.clone(), self.prefix, self.case);
+        let mut context = context.with(
+            self.meta.clone(),
+            self.prefix,
+            self.case,
+            self.style.clone(),
+        );
         match self.parse.parse(state, context.own()) {
             Ok(state) => Ok(state),
             Err(error) => Err(context.fill(error)),
@@ -828,7 +1082,12 @@ impl<P: Parse> Parse for Parser<P> {
     }
 
     fn finalize(&self, state: Self::State, mut context: Context) -> Result<Self::Value, Error> {
-        let mut context = context.with(self.meta.clone(), self.prefix, self.case);
+        let mut context = context.with(
+            self.meta.clone(),
+            self.prefix,
+            self.case,
+            self.style.clone(),
+        );
         match self.parse.finalize(state, context.own()) {
             Ok(value) => Ok(value),
             Err(error) => Err(context.fill(error)),
@@ -916,7 +1175,6 @@ impl<T: FromStr, P: Parse<Value = Option<T>>> Parse for Environment<P> {
                         value.clone(),
                         context.type_name(),
                         take(context.path),
-                        context.meta.key(),
                     )),
                 },
                 None => Ok(None),
@@ -927,14 +1185,11 @@ impl<T: FromStr, P: Parse<Value = Option<T>>> Parse for Environment<P> {
 
 impl<T> Clone for Value<T> {
     fn clone(&self) -> Self {
-        Self {
-            tag: self.tag.clone(),
-            _marker: PhantomData,
-        }
+        Self(PhantomData)
     }
 }
 
-impl<T: FromStr> Parse for Value<T> {
+impl<T: FromStr + 'static> Parse for Value<T> {
     type State = Option<T>;
     type Value = Option<T>;
 
@@ -942,44 +1197,38 @@ impl<T: FromStr> Parse for Value<T> {
         Ok(None)
     }
 
-    fn parse(&self, state: Self::State, mut context: Context) -> Result<Self::State, Error> {
+    fn parse(&self, state: Self::State, context: Context) -> Result<Self::State, Error> {
         if state.is_some() {
             return Err(context.duplicate_option());
         }
-        let argument = match (context.arguments.pop_front(), &self.tag, &mut context.index) {
-            (Some(Argument::String(argument)), _, _) => argument,
-            (argument, Some(tag), Some(index)) if *index == 0 => match tag.parse::<T>() {
-                Ok(value) => {
-                    if let Some(argument) = argument {
-                        context.arguments.push_front(argument);
-                    }
-                    *index += 1;
-                    return Ok(Some(value));
-                }
-                Err(_) => return Err(context.failed_parse(tag.clone())),
-            },
-            (Some(Argument::Swizzle(argument)), _, _) => {
-                return Err(Error::InvalidSwizzleOption(format!("{}", argument).into()))
+
+        let argument = match context.arguments.pop_front() {
+            Some(Argument::String(argument)) => argument,
+            Some(Argument::Swizzle(argument)) => {
+                return Err(Error::InvalidSwizzleOption(format!("{}", argument).into()));
             }
-            _ => return Err(context.missing_option()),
+            None if TypeId::of::<bool>() == TypeId::of::<T>() => match "true".parse::<T>() {
+                Ok(value) => return Ok(Some(value)),
+                Err(_) => return Err(context.failed_parse("true".into())),
+            },
+            None => return Err(context.missing_option()),
         };
-        match (argument.parse::<T>(), &self.tag, &mut context.index) {
-            (Ok(value), _, _) => {
+        match argument.parse::<T>() {
+            Ok(value) => {
                 if context.is_valid(&argument) {
                     Ok(Some(value))
                 } else {
                     Err(context.invalid_option(argument))
                 }
             }
-            (Err(_), Some(tag), Some(index)) if *index == 0 => {
-                context.arguments.push_front(Argument::String(argument));
-                *index += 1;
-                Ok(Some(
-                    tag.parse::<T>()
-                        .map_err(|_| context.failed_parse(tag.clone()))?,
-                ))
-            }
-            (Err(_), _, _) => Err(context.failed_parse(argument)),
+            Err(_) if TypeId::of::<bool>() == TypeId::of::<T>() => match "true".parse::<T>() {
+                Ok(value) => {
+                    context.arguments.push_front(Argument::String(argument));
+                    Ok(Some(value))
+                }
+                Err(_) => Err(context.failed_parse(argument)),
+            },
+            Err(_) => Err(context.failed_parse(argument)),
         }
     }
 
@@ -1058,9 +1307,9 @@ macro_rules! at {
             }
 
             fn parse(&self, mut _state: Self::State, mut _context: Context) -> Result<Self::State, Error> {
-                let Some(index) = _context.index else { return Err(Error::MissingIndex); };
-                match index & MASK {
-                    $($index => _state.$index = self.0.$index.parse(_state.$index, _context.at(index >> SHIFT))?,)*
+                let Some(index) = _context.indices.pop() else { return Err(Error::MissingIndex); };
+                match index {
+                    $($index => { _state.$index = self.0.$index.parse(_state.$index, _context.own())?; })*
                     index => return Err(Error::InvalidIndex(index)),
                 };
                 #[allow(unreachable_code)]
@@ -1139,10 +1388,18 @@ at!(Or5, T0, 0, T1, 1, T2, 2, T3, 3, T4, 4);
 at!(Or6, T0, 0, T1, 1, T2, 2, T3, 3, T4, 4, T5, 5);
 at!(Or7, T0, 0, T1, 1, T2, 2, T3, 3, T4, 4, T5, 5, T6, 6);
 at!(Or8, T0, 0, T1, 1, T2, 2, T3, 3, T4, 4, T5, 5, T6, 6, T7, 7);
-at!(Or9, T0, 0, T1, 1, T2, 2, T3, 3, T4, 4, T5, 5, T6, 6, T7, 7, T8, 8);
-at!(Or10, T0, 0, T1, 1, T2, 2, T3, 3, T4, 4, T5, 5, T6, 6, T7, 7, T8, 8, T9, 9);
-at!(Or11, T0, 0, T1, 1, T2, 2, T3, 3, T4, 4, T5, 5, T6, 6, T7, 7, T8, 8, T9, 9, T10, 10);
-at!(Or12, T0, 0, T1, 1, T2, 2, T3, 3, T4, 4, T5, 5, T6, 6, T7, 7, T8, 8, T9, 9, T10, 10, T11, 11);
+at!(
+    Or9, T0, 0, T1, 1, T2, 2, T3, 3, T4, 4, T5, 5, T6, 6, T7, 7, T8, 8
+);
+at!(
+    Or10, T0, 0, T1, 1, T2, 2, T3, 3, T4, 4, T5, 5, T6, 6, T7, 7, T8, 8, T9, 9
+);
+at!(
+    Or11, T0, 0, T1, 1, T2, 2, T3, 3, T4, 4, T5, 5, T6, 6, T7, 7, T8, 8, T9, 9, T10, 10
+);
+at!(
+    Or12, T0, 0, T1, 1, T2, 2, T3, 3, T4, 4, T5, 5, T6, 6, T7, 7, T8, 8, T9, 9, T10, 10, T11, 11
+);
 at!(
     Or13, T0, 0, T1, 1, T2, 2, T3, 3, T4, 4, T5, 5, T6, 6, T7, 7, T8, 8, T9, 9, T10, 10, T11, 11,
     T12, 12

@@ -1,4 +1,4 @@
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub enum Case {
     #[default]
     Same,
@@ -161,9 +161,8 @@ fn separated(
 
 #[cfg(test)]
 mod tests {
-    use std::fmt;
-
     use super::*;
+    use std::fmt;
 
     #[test]
     fn pascal() -> Result<(), fmt::Error> {

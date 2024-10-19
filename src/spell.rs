@@ -86,16 +86,13 @@ mod tests {
             ],
             2,
         );
-        assert_eq!(
-            results,
-            vec![
-                ("poulaye", 0),
-                ("piulaye", 1),
-                ("poulay", 1),
-                ("poullayye", 2),
-                ("pilaye", 2),
-                ("poulah", 2)
-            ]
-        );
+        assert_eq!(results, vec![
+            ("poulaye", 0),
+            ("piulaye", 1),
+            ("poulay", 1),
+            ("poullayye", 2),
+            ("pilaye", 2),
+            ("poulah", 2)
+        ]);
     }
 }

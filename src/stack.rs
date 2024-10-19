@@ -13,11 +13,12 @@ pub trait Stack {
 pub struct Overflow<T>(T);
 
 impl Stack for () {
-    const COUNT: usize = 0;
-    type Push<T> = (T,);
-    type Pop = ();
     type Clear = ();
     type Item = ();
+    type Pop = ();
+    type Push<T> = (T,);
+
+    const COUNT: usize = 0;
 
     #[inline]
     fn push<T>(self, item: T) -> Self::Push<T> {
@@ -34,11 +35,12 @@ impl Stack for () {
 }
 
 impl<T: Stack> Stack for Overflow<T> {
-    const COUNT: usize = T::COUNT;
-    type Push<U> = Overflow<T>;
-    type Pop = T::Pop;
     type Clear = T::Clear;
     type Item = T::Item;
+    type Pop = T::Pop;
+    type Push<U> = Overflow<T>;
+
+    const COUNT: usize = T::COUNT;
 
     #[inline]
     fn push<U>(self, _: U) -> Self::Push<T> {

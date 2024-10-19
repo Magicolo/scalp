@@ -1,6 +1,5 @@
-use crate::meta::Text;
-
 use self::color::*;
+use crate::meta::Text;
 use std::{
     borrow::Cow,
     fmt::{self, Display},
@@ -113,8 +112,12 @@ tuple!(Or5, T0, 0, T1, 1, T2, 2, T3, 3, T4, 4);
 tuple!(Or6, T0, 0, T1, 1, T2, 2, T3, 3, T4, 4, T5, 5);
 tuple!(Or7, T0, 0, T1, 1, T2, 2, T3, 3, T4, 4, T5, 5, T6, 6);
 tuple!(Or8, T0, 0, T1, 1, T2, 2, T3, 3, T4, 4, T5, 5, T6, 6, T7, 7);
-tuple!(Or9, T0, 0, T1, 1, T2, 2, T3, 3, T4, 4, T5, 5, T6, 6, T7, 7, T8, 8);
-tuple!(Or10, T0, 0, T1, 1, T2, 2, T3, 3, T4, 4, T5, 5, T6, 6, T7, 7, T8, 8, T9, 9);
+tuple!(
+    Or9, T0, 0, T1, 1, T2, 2, T3, 3, T4, 4, T5, 5, T6, 6, T7, 7, T8, 8
+);
+tuple!(
+    Or10, T0, 0, T1, 1, T2, 2, T3, 3, T4, 4, T5, 5, T6, 6, T7, 7, T8, 8, T9, 9
+);
 
 impl<T: Format + ?Sized> Format for &T {
     #[inline]
@@ -248,12 +251,15 @@ macro_rules! style {
             fn indent(&self) -> usize {
                 $name::indent(self)
             }
+
             fn width(&self) -> usize {
                 $name::width(self)
             }
+
             fn begin(&self, item: Item) -> &dyn Format {
                 $name::begin(self, item)
             }
+
             fn end(&self, item: Item) -> &dyn Format {
                 $name::end(self, item)
             }

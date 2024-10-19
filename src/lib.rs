@@ -47,9 +47,6 @@ pub use crate::{
     - Support for json values.
 */
 
-const SHIFT: u32 = 5;
-const MASK: usize = (1 << SHIFT) - 1;
-
 #[macro_export]
 macro_rules! header {
     () => {

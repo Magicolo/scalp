@@ -1,7 +1,7 @@
 use crate::{
-    meta::{prefix, Meta, Prefix, Text},
+    meta::{Meta, Prefix, Text, prefix},
     parse::Key,
-    style::{Format, Item, Line, Style, Termion},
+    style::{Format, Item, Line, Style},
 };
 use core::{fmt, mem::replace, slice::from_ref};
 use std::{
@@ -17,6 +17,7 @@ pub struct Help {
     pub(crate) root: Arc<Meta>,
     pub(crate) meta: Arc<Meta>,
     pub(crate) path: Vec<Key>,
+    pub(crate) style: Arc<dyn Style>,
 }
 #[derive(Debug, Clone)]
 pub struct Version(pub(crate) Arc<Meta>);
@@ -44,7 +45,7 @@ impl fmt::Display for Help {
         let mut writer = Helper {
             format: f,
             path: &self.path,
-            style: &Termion,
+            style: &self.style,
             indent: 0,
         };
         writer.node(&self.root, from_ref(&self.meta), 0)
@@ -194,7 +195,8 @@ impl<'a, 'b> Helper<'a, 'b> {
                     Prefix::Long if long => Some(Cow::Borrowed(value)),
                     _ => None,
                 },
-                // TODO: This is wrong? Position needs to consider sibling nodes which may not be available through 'metas'.
+                // TODO: This is wrong? Position needs to consider sibling nodes which may not be
+                // available through 'metas'.
                 // - Example: When rendering the help for an option with '.position()'.
                 Meta::Position if short => {
                     let current = position;
@@ -458,10 +460,6 @@ impl<'a, 'b> Helper<'a, 'b> {
         let mut columns = Columns::default();
         for meta in Meta::visible(metas) {
             let mut helper = self.own();
-            if let Some(style) = Meta::style(meta.children()) {
-                helper.style = style;
-            }
-
             match meta {
                 Meta::Position if depth == 0 => {
                     *position += 1;
@@ -540,10 +538,6 @@ impl<'a, 'b> Helper<'a, 'b> {
         let columns = self.columns(metas, &mut 0, 1);
         for meta in Meta::visible(metas) {
             let mut helper = self.own();
-            if let Some(style) = Meta::style(meta.children()) {
-                helper.style = style;
-            }
-
             match meta {
                 Meta::Help(value) => {
                     helper.indentation()?;

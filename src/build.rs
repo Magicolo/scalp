@@ -1,5 +1,3 @@
-use regex::Regex;
-
 use crate::{
     case::Case,
     error::Error,
@@ -10,13 +8,13 @@ use crate::{
     style,
 };
 use core::{any::TypeId, default, fmt, marker::PhantomData, num::NonZeroUsize, str::FromStr};
+use regex::Regex;
 use std::{any, convert::Infallible, sync::Arc};
 
 pub struct Builder<S, P = At<()>> {
     case: Case,
     tag: Text,
     prefix: char,
-    buffer: String,
     parse: Result<P, Error>,
     scope: S,
 }
@@ -107,7 +105,6 @@ impl<S, P> Builder<S, P> {
             case,
             tag: self.tag,
             prefix,
-            buffer: self.buffer,
             scope: self.scope,
             parse: self
                 .parse
@@ -132,39 +129,29 @@ impl<S, P> Builder<S, P> {
             case: self.case,
             tag: self.tag,
             prefix: self.prefix,
-            buffer: self.buffer,
             scope: scope(self.scope),
             parse: self.parse.and_then(parse),
         }
     }
 
     fn swap_scope<T>(self, scope: T) -> (S, Builder<T, P>) {
-        (
-            self.scope,
-            Builder {
-                case: self.case,
-                tag: self.tag,
-                prefix: self.prefix,
-                buffer: self.buffer,
-                scope,
-                parse: self.parse,
-            },
-        )
+        (self.scope, Builder {
+            case: self.case,
+            tag: self.tag,
+            prefix: self.prefix,
+            scope,
+            parse: self.parse,
+        })
     }
 
     fn swap_both<T, Q>(self, scope: T, parse: Q) -> (S, Result<P, Error>, Builder<T, Q>) {
-        (
-            self.scope,
-            self.parse,
-            Builder {
-                case: self.case,
-                tag: self.tag,
-                prefix: self.prefix,
-                buffer: self.buffer,
-                scope,
-                parse: Ok(parse),
-            },
-        )
+        (self.scope, self.parse, Builder {
+            case: self.case,
+            tag: self.tag,
+            prefix: self.prefix,
+            scope,
+            parse: Ok(parse),
+        })
     }
 
     fn convert(&mut self, format: impl Into<Text>) -> Text {
@@ -364,48 +351,47 @@ impl<S: scope::Node, P> Builder<S, P> {
     }
 }
 
-impl<P: Parse> Parser<Node<P>> {
-    #[inline]
-    pub fn verb(
-        build: impl FnOnce(Builder<scope::Verb, At>) -> Builder<scope::Verb, P>,
-    ) -> Result<Self, Error> {
-        let builder = verb(Builder::new(), build);
-        Ok(builder.parse?.0)
-    }
-}
+// impl<P: Parse> Parser<Node<P>> {
+//     #[inline]
+//     pub fn verb(
+//         build: impl FnOnce(Builder<scope::Verb, At>) -> Builder<scope::Verb,
+// P>,     ) -> Result<Self, Error> {
+//         let builder = verb(Builder::new(), build);
+//         Ok(builder.parse?.0)
+//     }
+// }
 
-impl<P: Parse> Parser<P> {
-    #[inline]
-    pub fn group(
-        self,
-        build: impl FnOnce(Builder<scope::Group, At>) -> Builder<scope::Group, P>,
-    ) -> Result<Self, Error> {
-        let builder = group(Builder::new(), build);
-        Ok(builder.parse?.0)
-    }
+// impl<P: Parse> Parser<P> {
+//     #[inline]
+//     pub fn group(
+//         self,
+//         build: impl FnOnce(Builder<scope::Group, At>) ->
+// Builder<scope::Group, P>,     ) -> Result<Self, Error> {
+//         let builder = group(Builder::new(), build);
+//         Ok(builder.parse?.0)
+//     }
 
-    #[inline]
-    pub fn option<T: FromStr + 'static>(
-        build: impl FnOnce(Builder<scope::Option, Value<T>>) -> Builder<scope::Option, P>,
-    ) -> Result<Self, Error> {
-        let builder = option(Builder::new(), build);
-        Ok(builder.parse?.0)
-    }
-}
+//     #[inline]
+//     pub fn option<T: FromStr + 'static>(
+//         build: impl FnOnce(Builder<scope::Option, Value<T>>) ->
+// Builder<scope::Option, P>,     ) -> Result<Self, Error> {
+//         let builder = option(Builder::new(), build);
+//         Ok(builder.parse?.0)
+//     }
+// }
 
-impl Builder<scope::Root, ()> {
-    #[inline]
-    const fn new() -> Self {
-        Self {
-            case: Case::Kebab { upper: false },
-            tag: Text::Static(parse::TAG),
-            prefix: parse::PREFIX,
-            buffer: String::new(),
-            parse: Ok(()),
-            scope: scope::Root::new(),
-        }
-    }
-}
+// impl Builder<scope::Root, ()> {
+//     #[inline]
+//     const fn new() -> Self {
+//         Self {
+//             case: Case::Kebab { upper: false },
+//             tag: Text::Static(parse::TAG),
+//             prefix: parse::PREFIX,
+//             parse: Ok(()),
+//             scope: scope::Root::new(),
+//         }
+//     }
+// }
 
 impl<P> Builder<scope::Group, P> {
     pub fn name(self, name: impl Into<Text>) -> Self {
@@ -492,27 +478,16 @@ impl<P> Builder<scope::Verb, P> {
 
 impl Builder<scope::Option, Value<Unit>> {
     pub fn parse<T: FromStr + 'static>(self) -> Builder<scope::Option, Value<T>> {
-        let tag = self.tag.clone();
-        self.parse_with(
-            if TypeId::of::<T>() == TypeId::of::<bool>() {
-                Some(tag)
-            } else {
-                None
-            },
-            type_name::<T>(),
-        )
+        self.parse_with(type_name::<T>())
     }
 
     pub fn parse_with<T: FromStr>(
         mut self,
-        tag: Option<impl Into<Text>>,
         format: impl Into<Text>,
     ) -> Builder<scope::Option, Value<T>> {
         let format = self.convert(format);
-        self.meta(Meta::Type(format)).map_parse(|_| Value {
-            tag: tag.map(Into::into),
-            _marker: PhantomData,
-        })
+        self.meta(Meta::Type(format))
+            .map_parse(|_| Value(PhantomData))
     }
 }
 
