@@ -269,24 +269,24 @@ fn global_options(builder: Builder<scope::Group>) -> Builder<scope::Group, impl 
 }
 
 fn main() -> Result<(), Error> {
-    let parser = Parser::verb(|root| root
+    let parser = verb()
         .name(env!("CARGO_BIN_NAME").trim())
         .version(env!("CARGO_PKG_VERSION").trim())
         .summary("A self-sufficient runtime for containers.")
         .usage("Usage: docker [OPTIONS] COMMAND")
-        .group(|group| group
-            .group(common_commands)
-            .group(management_commands)
-            .group(swarm_commands)
-            .group(commands)
+        .child(group()
+            .child(common_commands())
+            .child(management_commands())
+            .child(swarm_commands())
+            .child(commands())
             .any::<Command>()
             .require()
         )
-        .group(global_options)
+        .child(global_options())
         .help("Run 'docker COMMAND --help' for more information on a command.")
         .line()
         .note("For more help on how to use Docker, head to https://docs.docker.com/go/guides/")
-        .map(|(command, global)| Docker { command, global }))?;
+        .map(|(command, global)| Docker { command, global })?;
     let arguments = [
         "--config", "boba", "--debug", "false", "-H", "jango", "--host", "karl", "kill",
     ];

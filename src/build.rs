@@ -2,7 +2,9 @@ use crate::{
     case::Case,
     error::Error,
     meta::{Meta, Options, Text},
-    parse::{self, Any, At, Default, Environment, Many, Map, Node, Parse, Parser, Require, Value},
+    parse::{
+        self, Any, At, Default, Environment, Many, Map, Node, Parse, Parser, Require, TryMap, Value,
+    },
     scope::{self, Scope},
     stack::Stack,
     style,
@@ -40,18 +42,18 @@ impl<S, P> Builder<S, P> {
         pipe(self)
     }
 
-    pub fn map<T, F: Fn(P::Value) -> T>(self, map: F) -> Builder<S, impl Parse<Value = T>>
-    where
-        P: Parse,
-    {
-        self.try_map(move |value| Ok(map(value)))
-    }
-
-    pub fn try_map<T, F: Fn(P::Value) -> Result<T, Error>>(self, map: F) -> Builder<S, Map<P, F>>
+    pub fn map<T, F: Fn(P::Value) -> T>(self, map: F) -> Builder<S, Map<P, F>>
     where
         P: Parse,
     {
         self.map_parse(|parse| Map(parse, map))
+    }
+
+    pub fn try_map<T, F: Fn(P::Value) -> Result<T, Error>>(self, map: F) -> Builder<S, TryMap<P, F>>
+    where
+        P: Parse,
+    {
+        self.map_parse(|parse| TryMap(parse, map))
     }
 
     pub fn filter(
@@ -282,9 +284,9 @@ impl<S: Scope, P> Builder<S, P> {
         }
     }
 
-    pub fn style<T: style::Style + 'static>(self, style: T) -> Self {
-        self.meta(Meta::Style(Arc::new(style)))
-    }
+    // pub fn style<T: style::Style + 'static>(self, style: T) -> Self {
+    //     self.meta(Meta::Style(Arc::new(style)))
+    // }
 
     fn meta(self, meta: Meta) -> Self {
         self.try_meta(Ok(meta))
@@ -292,14 +294,14 @@ impl<S: Scope, P> Builder<S, P> {
 }
 
 impl<S: scope::Node, P> Builder<S, P> {
-    pub fn prefix(mut self, prefix: char) -> Self {
-        if prefix.is_alphanumeric() || prefix.is_whitespace() || prefix.is_control() {
-            self.try_map_parse(|_| Err(Error::InvalidPrefix(prefix)))
-        } else {
-            self.prefix = prefix;
-            self.meta(Meta::Prefix(prefix))
-        }
-    }
+    // pub fn prefix(mut self, prefix: char) -> Self {
+    //     if prefix.is_alphanumeric() || prefix.is_whitespace() ||
+    // prefix.is_control() {         self.try_map_parse(|_|
+    // Err(Error::InvalidPrefix(prefix)))     } else {
+    //         self.prefix = prefix;
+    //         self.meta(Meta::Prefix(prefix))
+    //     }
+    // }
 
     pub fn usage(self, usage: impl Into<Text>) -> Self {
         let usage = usage.into();
@@ -310,38 +312,38 @@ impl<S: scope::Node, P> Builder<S, P> {
         }
     }
 
-    #[inline]
-    pub fn group<Q>(
-        self,
-        build: impl FnOnce(Builder<scope::Group, At>) -> Builder<scope::Group, Q>,
-    ) -> Builder<S, P::Push<Parser<Q>>>
-    where
-        P: Stack,
-    {
-        group(self, build)
-    }
+    // #[inline]
+    // pub fn group<Q>(
+    //     self,
+    //     build: impl FnOnce(Builder<scope::Group, At>) -> Builder<scope::Group,
+    // Q>, ) -> Builder<S, P::Push<Parser<Q>>>
+    // where
+    //     P: Stack,
+    // {
+    //     group(self, build)
+    // }
 
-    #[inline]
-    pub fn verb<Q>(
-        self,
-        build: impl FnOnce(Builder<scope::Verb, At>) -> Builder<scope::Verb, Q>,
-    ) -> Builder<S, P::Push<Parser<Node<Q>>>>
-    where
-        P: Stack,
-    {
-        verb(self, build)
-    }
+    // #[inline]
+    // pub fn verb<Q>(
+    //     self,
+    //     build: impl FnOnce(Builder<scope::Verb, At>) -> Builder<scope::Verb, Q>,
+    // ) -> Builder<S, P::Push<Parser<Node<Q>>>>
+    // where
+    //     P: Stack,
+    // {
+    //     verb(self, build)
+    // }
 
-    #[inline]
-    pub fn option<T: FromStr + 'static, Q>(
-        self,
-        build: impl FnOnce(Builder<scope::Option, Value<T>>) -> Builder<scope::Option, Q>,
-    ) -> Builder<S, P::Push<Parser<Q>>>
-    where
-        P: Stack,
-    {
-        option(self, build)
-    }
+    // #[inline]
+    // pub fn option<T: FromStr + 'static, Q>(
+    //     self,
+    //     build: impl FnOnce(Builder<scope::Option, Value<T>>) ->
+    // Builder<scope::Option, Q>, ) -> Builder<S, P::Push<Parser<Q>>>
+    // where
+    //     P: Stack,
+    // {
+    //     option(self, build)
+    // }
 
     pub fn options(self, options: impl IntoIterator<Item = Options>) -> Self {
         options
@@ -405,11 +407,11 @@ impl<P> Builder<scope::Group, P> {
 }
 
 impl<P> Builder<scope::Verb, P> {
-    pub fn case(mut self, case: Case) -> Self {
-        self.case = case;
-        self.tag = case.convert(parse::TAG.chars()).collect();
-        self
-    }
+    // pub fn case(mut self, case: Case) -> Self {
+    //     self.case = case;
+    //     self.tag = case.convert(parse::TAG.chars()).collect();
+    //     self
+    // }
 
     pub fn name(self, name: impl Into<Text>) -> Self {
         let name = name.into();
@@ -527,74 +529,74 @@ impl<P> Builder<scope::Option, P> {
     }
 }
 
-fn group<S: scope::Scope, P, Q>(
-    builder: Builder<S, P>,
-    build: impl FnOnce(Builder<scope::Group, At>) -> Builder<scope::Group, Q>,
-) -> Builder<S, P::Push<Parser<Q>>>
-where
-    P: Stack,
-{
-    let prefix = builder.prefix;
-    let case = builder.case;
-    let (scope, old, builder) = builder.swap_both(scope::Group::new(), At(()));
-    let (group, mut builder) = build(builder).swap_scope(scope);
-    let meta = Meta::from(group);
-    builder.scope.push(meta.clone(usize::MAX));
-    builder.try_swap_map(prefix, case, |new, prefix, case| {
-        Ok(old?.push(Parser {
-            parse: new,
-            meta: Arc::new(meta),
-            prefix: Some(prefix),
-            case: Some(case),
-        }))
-    })
-}
+// fn group<S: scope::Scope, P, Q>(
+//     builder: Builder<S, P>,
+//     build: impl FnOnce(Builder<scope::Group, At>) -> Builder<scope::Group,
+// Q>, ) -> Builder<S, P::Push<Parser<Q>>>
+// where
+//     P: Stack,
+// {
+//     let prefix = builder.prefix;
+//     let case = builder.case;
+//     let (scope, old, builder) = builder.swap_both(scope::Group::new(),
+// At(()));     let (group, mut builder) = build(builder).swap_scope(scope);
+//     let meta = Meta::from(group);
+//     builder.scope.push(meta.clone(usize::MAX));
+//     builder.try_swap_map(prefix, case, |new, prefix, case| {
+//         Ok(old?.push(Parser {
+//             parse: new,
+//             meta: Arc::new(meta),
+//             prefix: Some(prefix),
+//             case: Some(case),
+//         }))
+//     })
+// }
 
-fn verb<S: scope::Scope, P, Q>(
-    builder: Builder<S, P>,
-    build: impl FnOnce(Builder<scope::Verb, At>) -> Builder<scope::Verb, Q>,
-) -> Builder<S, P::Push<Parser<Node<Q>>>>
-where
-    P: Stack,
-{
-    let prefix = builder.prefix;
-    let case = builder.case;
-    let (scope, old, builder) = builder.swap_both(scope::Verb::new(), At(()));
-    let (verb, mut builder) = build(builder).swap_scope(scope);
-    let meta = Meta::from(verb);
-    builder.scope.push(meta.clone(1));
-    builder.try_swap_map(prefix, case, |new, prefix, case| {
-        Ok(old?.push(Parser {
-            parse: Node(new),
-            meta: Arc::new(meta),
-            prefix: Some(prefix),
-            case: Some(case),
-        }))
-    })
-}
+// fn verb<S: scope::Scope, P, Q>(
+//     builder: Builder<S, P>,
+//     build: impl FnOnce(Builder<scope::Verb, At>) -> Builder<scope::Verb, Q>,
+// ) -> Builder<S, P::Push<Parser<Node<Q>>>>
+// where
+//     P: Stack,
+// {
+//     let prefix = builder.prefix;
+//     let case = builder.case;
+//     let (scope, old, builder) = builder.swap_both(scope::Verb::new(),
+// At(()));     let (verb, mut builder) = build(builder).swap_scope(scope);
+//     let meta = Meta::from(verb);
+//     builder.scope.push(meta.clone(1));
+//     builder.try_swap_map(prefix, case, |new, prefix, case| {
+//         Ok(old?.push(Parser {
+//             parse: Node(new),
+//             meta: Arc::new(meta),
+//             prefix: Some(prefix),
+//             case: Some(case),
+//         }))
+//     })
+// }
 
-fn option<T: FromStr + 'static, S: scope::Scope, P, Q>(
-    builder: Builder<S, P>,
-    build: impl FnOnce(Builder<scope::Option, Value<T>>) -> Builder<scope::Option, Q>,
-) -> Builder<S, P::Push<Parser<Q>>>
-where
-    P: Stack,
-{
-    let prefix = builder.prefix;
-    let case = builder.case;
-    let (scope, old, builder) = builder.swap_both(scope::Option::new(), Value::default());
-    let (option, mut builder) = build(builder.parse::<T>()).swap_scope(scope);
-    let meta = Meta::from(option);
-    builder.scope.push(meta.clone(1));
-    builder.try_swap_map(prefix, case, |new, prefix, case| {
-        Ok(old?.push(Parser {
-            parse: new,
-            meta: Arc::new(meta),
-            prefix: Some(prefix),
-            case: Some(case),
-        }))
-    })
-}
+// fn option<T: FromStr + 'static, S: scope::Scope, P, Q>(
+//     builder: Builder<S, P>,
+//     build: impl FnOnce(Builder<scope::Option, Value<T>>) ->
+// Builder<scope::Option, Q>, ) -> Builder<S, P::Push<Parser<Q>>>
+// where
+//     P: Stack,
+// {
+//     let prefix = builder.prefix;
+//     let case = builder.case;
+//     let (scope, old, builder) = builder.swap_both(scope::Option::new(),
+// Value::default());     let (option, mut builder) =
+// build(builder.parse::<T>()).swap_scope(scope);     let meta =
+// Meta::from(option);     builder.scope.push(meta.clone(1));
+//     builder.try_swap_map(prefix, case, |new, prefix, case| {
+//         Ok(old?.push(Parser {
+//             parse: new,
+//             meta: Arc::new(meta),
+//             prefix: Some(prefix),
+//             case: Some(case),
+//         }))
+//     })
+// }
 
 fn type_name<T: 'static>() -> &'static str {
     macro_rules! is {

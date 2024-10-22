@@ -226,7 +226,6 @@ impl Meta {
 }
 
 impl Text {
-    #[inline]
     pub fn as_str(&self) -> &str {
         match self {
             Text::Static(value) => value,
@@ -262,7 +261,6 @@ impl hash::Hash for Text {
 impl Deref for Text {
     type Target = str;
 
-    #[inline]
     fn deref(&self) -> &Self::Target {
         match self {
             Text::Static(value) => value,
@@ -287,14 +285,12 @@ impl FromIterator<char> for Text {
 }
 
 impl From<&'static str> for Text {
-    #[inline]
     fn from(value: &'static str) -> Self {
         Self::Static(value)
     }
 }
 
 impl From<Cow<'static, str>> for Text {
-    #[inline]
     fn from(value: Cow<'static, str>) -> Self {
         match value {
             Cow::Borrowed(value) => Self::Static(value),
@@ -306,7 +302,6 @@ impl From<Cow<'static, str>> for Text {
 macro_rules! from {
     ($type: ty) => {
         impl From<$type> for Text {
-            #[inline]
             fn from(value: $type) -> Self {
                 Self::Shared(value.into())
             }

@@ -53,12 +53,10 @@ pub trait Format {
 macro_rules! format {
     ($type: ty, $count: expr) => {
         impl Format for $type {
-            #[inline]
             fn width(&self) -> usize {
                 $count
             }
 
-            #[inline]
             fn format(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
                 fmt::Display::fmt(self, formatter)
             }
@@ -69,12 +67,10 @@ macro_rules! format {
 macro_rules! tuple {
     ($or: ident $(, $name: ident, $index: tt)*) => {
         impl<$($name: Format),*> Format for ($($name,)*) {
-            #[inline]
             fn width(&self) -> usize {
                 $(self.$index.width() + )* 0
             }
 
-            #[inline]
             fn format(&self, _formatter: &mut fmt::Formatter) -> fmt::Result {
                 $(self.$index.format(_formatter)?;)*
                 Ok(())
@@ -82,7 +78,6 @@ macro_rules! tuple {
         }
 
         impl<$($name: Format),*> Format for orn::$or<$($name,)*> {
-            #[inline]
             fn width(&self) -> usize {
                 match self {
                     $(orn::$or::$name(value) => value.width(),)*
@@ -91,7 +86,6 @@ macro_rules! tuple {
                 }
             }
 
-            #[inline]
             fn format(&self, _formatter: &mut fmt::Formatter) -> fmt::Result {
                 match self {
                     $(orn::$or::$name(value) => value.format(_formatter),)*
@@ -120,24 +114,20 @@ tuple!(
 );
 
 impl<T: Format + ?Sized> Format for &T {
-    #[inline]
     fn width(&self) -> usize {
         T::width(self)
     }
 
-    #[inline]
     fn format(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
         T::format(self, formatter)
     }
 }
 
 impl<T: Format> Format for [T] {
-    #[inline]
     fn width(&self) -> usize {
         self.iter().map(Format::width).sum()
     }
 
-    #[inline]
     fn format(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
         for item in self {
             item.format(formatter)?;
@@ -147,12 +137,10 @@ impl<T: Format> Format for [T] {
 }
 
 impl<T: Format, const N: usize> Format for [T; N] {
-    #[inline]
     fn width(&self) -> usize {
         self.iter().map(Format::width).sum()
     }
 
-    #[inline]
     fn format(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
         for item in self {
             item.format(formatter)?;

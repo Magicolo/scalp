@@ -1,3 +1,5 @@
+use core::str::FromStr;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub enum Case {
     #[default]
@@ -16,6 +18,30 @@ pub enum Case {
         separator: char,
         upper: bool,
     },
+}
+
+pub struct Unrecognized;
+impl FromStr for Case {
+    type Err = Unrecognized;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "same" | "" => Ok(Case::Same),
+            "lower" | "lowercase" => Ok(Case::Lower),
+            "upper" | "UPPER" | "UPPERCASE" => Ok(Case::Upper),
+            "pascal" | "Pascal" | "PascalCase" => Ok(Case::Pascal),
+            "camel" | "camelCase" => Ok(Case::Camel),
+            "snake" | "snake_case" | "lower_snake" | "lower_snake_case" => {
+                Ok(Case::Snake { upper: false })
+            }
+            "upper_snake" | "UPPER_SNAKE" | "UPPER_SNAKE_CASE" => Ok(Case::Snake { upper: true }),
+            "kebab" | "kebab-case" | "lower-kebab" | "lower-kebab-case" => {
+                Ok(Case::Kebab { upper: false })
+            }
+            "upper-kebab" | "UPPER-KEBAB" | "UPPER-KEBAB-CASE" => Ok(Case::Kebab { upper: true }),
+            _ => Err(Unrecognized),
+        }
+    }
 }
 
 impl Case {

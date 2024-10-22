@@ -60,6 +60,8 @@ pub struct Many<P, I, N, F> {
 #[derive(Clone)]
 pub struct Map<P, F>(pub(crate) P, pub(crate) F);
 #[derive(Clone)]
+pub struct TryMap<P, F>(pub(crate) P, pub(crate) F);
+#[derive(Clone)]
 pub struct Require<P>(pub(crate) P);
 #[derive(Clone)]
 pub struct Default<P, T>(pub(crate) P, pub(crate) T);
@@ -80,7 +82,7 @@ enum Argument {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-struct Name {
+pub struct Name {
     value: Text,
     prefixes: (Option<char>, Option<char>),
     case: Option<Case>,
@@ -197,6 +199,28 @@ impl fmt::Display for Key {
     }
 }
 
+impl<T: Stack> Stack for Node<T> {
+    type Clear = Node<T::Clear>;
+    type Item = T::Item;
+    type Pop = Node<T::Pop>;
+    type Push<U> = Node<T::Push<U>>;
+
+    const COUNT: usize = T::COUNT;
+
+    fn push<U>(self, item: U) -> Self::Push<U> {
+        Node(self.0.push(item))
+    }
+
+    fn pop(self) -> (Self::Item, Self::Pop) {
+        let pair = self.0.pop();
+        (pair.0, Node(pair.1))
+    }
+
+    fn clear(self) -> Self::Clear {
+        Node(self.0.clear())
+    }
+}
+
 impl<T: Stack> Stack for At<T> {
     type Clear = At<T::Clear>;
     type Item = T::Item;
@@ -243,7 +267,7 @@ impl<'a> Context<'a> {
         self.names.clear();
         let result = KeyFinder {
             argument: &argument,
-            arguments: &mut self.arguments,
+            arguments: self.arguments,
             metas: self.meta.children(),
             names: self.names,
             indices: self.indices,
@@ -400,8 +424,8 @@ impl<'a> Context<'a> {
         name.cloned()
     }
 
-    fn with<'b>(
-        &'b mut self,
+    fn with(
+        &mut self,
         meta: Arc<Meta>,
         prefix: Option<char>,
         case: Option<Case>,
@@ -433,19 +457,16 @@ impl<P> Parser<P> {
         }
     }
 
-    #[inline]
     pub const fn case(mut self, case: Case) -> Self {
         self.case = Some(case);
         self
     }
 
-    #[inline]
     pub const fn prefix(mut self, prefix: char) -> Self {
         self.prefix = Some(prefix);
         self
     }
 
-    #[inline]
     pub fn style<S: Style + 'static>(mut self, style: S) -> Self {
         self.style = Some(Arc::new(style));
         self
@@ -457,7 +478,7 @@ impl<P> Parser<P> {
                 let name = name.into();
                 if name
                     .chars()
-                    .any(|letter| letter.is_whitespace() || !letter.is_ascii())
+                    .any(|letter| letter.is_whitespace() || !letter.is_ascii_alphanumeric())
                 {
                     Err(Error::InvalidOptionName(name))
                 } else {
@@ -469,7 +490,7 @@ impl<P> Parser<P> {
                 let name = name.into();
                 if name
                     .chars()
-                    .any(|letter| letter.is_whitespace() || !letter.is_ascii())
+                    .any(|letter| letter.is_whitespace() || !letter.is_ascii_alphanumeric())
                 {
                     Err(Error::InvalidVerbName(name))
                 } else {
@@ -479,35 +500,31 @@ impl<P> Parser<P> {
             }
             Meta::Group(metas) => {
                 let name = name.into();
-                if name.chars().all(char::is_whitespace) {
-                    Err(Error::InvalidGroupName(name))
-                } else {
+                if !name.chars().all(char::is_whitespace) {
                     metas.push(Meta::Name(name));
-                    Ok(())
                 }
+                Ok(())
             }
-            _ => Err(Error::InvalidLeafMeta(Clone::clone(meta))),
+            meta => Err(Error::InvalidLeafMeta(Clone::clone(meta))),
         })?;
         Ok(self)
     }
 
-    #[inline]
+    pub fn help(self, help: impl Into<Text>) -> Self {
+        let help = help.into();
+        if help.chars().all(char::is_whitespace) {
+            self
+        } else {
+            self.meta(Meta::Help(help))
+        }
+    }
+
     pub fn child<Q>(self, parser: Parser<Q>) -> Parser<P::Push<Parser<Q>>>
     where
         P: Stack,
     {
         self.meta(parser.meta.as_ref().clone(0))
-            .map(|parse| parse.push(parser))
-    }
-
-    pub fn map<Q>(self, map: impl FnOnce(P) -> Q) -> Parser<Q> {
-        Parser {
-            parse: map(self.parse),
-            meta: self.meta,
-            prefix: self.prefix,
-            case: self.case,
-            style: self.style,
-        }
+            .map_parse(|parse| parse.push(parser))
     }
 
     pub fn meta(mut self, meta: Meta) -> Self {
@@ -533,27 +550,20 @@ impl<P> Parser<P> {
             _ => None,
         })
     }
-}
 
-impl Parser<At> {
-    pub fn verb() -> Self {
-        Parser::new(At(()), Meta::Verb(Vec::new()))
-    }
-
-    pub fn group() -> Self {
-        Parser::new(At(()), Meta::Group(Vec::new()))
-    }
-}
-
-impl<T: FromStr + 'static> Parser<Value<T>> {
-    pub fn option() -> Self {
-        Parser::new(Value(PhantomData), Meta::Option(Vec::new()))
-            .meta(Meta::Type(type_name::<T>().into()))
+    fn map_parse<Q>(self, map: impl FnOnce(P) -> Q) -> Parser<Q> {
+        Parser {
+            parse: map(self.parse),
+            meta: self.meta,
+            prefix: self.prefix,
+            case: self.case,
+            style: self.style,
+        }
     }
 }
 
-impl<T, P: Parse<Value = Option<T>>> Parser<P> {
-    pub fn parse(&self) -> Result<T, Error> {
+impl<P: Parse> Parser<P> {
+    pub fn parse(&self) -> Result<P::Value, Error> {
         self.parse_with(std::env::args().skip(1), std::env::vars())
     }
 
@@ -561,7 +571,7 @@ impl<T, P: Parse<Value = Option<T>>> Parser<P> {
         &self,
         arguments: impl IntoIterator<Item = A>,
         environment: impl IntoIterator<Item = (K, V)>,
-    ) -> Result<T, Error> {
+    ) -> Result<P::Value, Error> {
         let mut arguments = arguments
             .into_iter()
             .map(Into::into)
@@ -587,7 +597,7 @@ impl<T, P: Parse<Value = Option<T>>> Parser<P> {
         };
         let state = Parse::initialize(self, context.own())?;
         let state = Parse::parse(self, state, context.own())?;
-        let value = Parse::finalize(self, state, context)?.ok_or(Error::FailedToParseArguments)?;
+        let value = Parse::finalize(self, state, context)?;
         if arguments.is_empty() {
             Ok(value)
         } else {
@@ -602,23 +612,50 @@ impl<T, P: Parse<Value = Option<T>>> Parser<P> {
             ))
         }
     }
+
+    pub fn map<T, F: Fn(P::Value) -> T>(self, map: F) -> Parser<Map<P, F>> {
+        self.map_parse(|parse| Map(parse, map))
+    }
+
+    pub fn try_map<T, E: Into<Error>, F: Fn(P::Value) -> Result<T, E>>(
+        self,
+        map: F,
+    ) -> Parser<TryMap<P, F>> {
+        self.map_parse(|parse| TryMap(parse, map))
+    }
+}
+
+impl Parser<Node<At>> {
+    pub fn verb() -> Self {
+        Parser::new(Node(At(())), Meta::Verb(Vec::new()))
+    }
+}
+
+impl Parser<At> {
+    pub fn group() -> Self {
+        Parser::new(At(()), Meta::Group(Vec::new()))
+    }
+}
+
+impl<T: FromStr + 'static> Parser<Value<T>> {
+    pub fn option() -> Self {
+        Parser::new(Value(PhantomData), Meta::Option(Vec::new()))
+            .meta(Meta::Type(type_name::<T>().into()))
+    }
 }
 
 impl<P: Parse + ?Sized> Parse for Box<P> {
     type State = P::State;
     type Value = P::Value;
 
-    #[inline]
     fn initialize(&self, context: Context) -> Result<Self::State, Error> {
         P::initialize(self, context)
     }
 
-    #[inline]
     fn parse(&self, state: Self::State, context: Context) -> Result<Self::State, Error> {
         P::parse(self, state, context)
     }
 
-    #[inline]
     fn finalize(&self, state: Self::State, context: Context) -> Result<Self::Value, Error> {
         P::finalize(self, state, context)
     }
@@ -628,17 +665,14 @@ impl<P: Parse + ?Sized> Parse for &P {
     type State = P::State;
     type Value = P::Value;
 
-    #[inline]
     fn initialize(&self, context: Context) -> Result<Self::State, Error> {
         P::initialize(self, context)
     }
 
-    #[inline]
     fn parse(&self, state: Self::State, context: Context) -> Result<Self::State, Error> {
         P::parse(self, state, context)
     }
 
-    #[inline]
     fn finalize(&self, state: Self::State, context: Context) -> Result<Self::Value, Error> {
         P::finalize(self, state, context)
     }
@@ -648,17 +682,14 @@ impl<P: Parse + ?Sized> Parse for &mut P {
     type State = P::State;
     type Value = P::Value;
 
-    #[inline]
     fn initialize(&self, context: Context) -> Result<Self::State, Error> {
         P::initialize(self, context)
     }
 
-    #[inline]
     fn parse(&self, state: Self::State, context: Context) -> Result<Self::State, Error> {
         P::parse(self, state, context)
     }
 
-    #[inline]
     fn finalize(&self, state: Self::State, context: Context) -> Result<Self::Value, Error> {
         P::finalize(self, state, context)
     }
@@ -692,38 +723,265 @@ impl<P: Parse> Parse for Node<P> {
     }
 }
 
-fn trim_pattern(pattern: &Regex) -> &str {
-    pattern
-        .as_str()
-        .trim_start_matches('^')
-        .trim_end_matches('$')
-}
+impl<P: Parse> Parse for Parser<P> {
+    type State = P::State;
+    type Value = P::Value;
 
-fn type_name<T: 'static>() -> &'static str {
-    macro_rules! is {
-        ($left: expr $(, $rights: ident)+) => {
-            $($left == TypeId::of::<$rights>() || $left == TypeId::of::<Option<$rights>>() ||)+ false
-        };
+    fn initialize(&self, mut context: Context) -> Result<Self::State, Error> {
+        let mut context = context.with(
+            self.meta.clone(),
+            self.prefix,
+            self.case,
+            self.style.clone(),
+        );
+        match self.parse.initialize(context.own()) {
+            Ok(state) => Ok(state),
+            Err(error) => Err(context.fill(error)),
+        }
     }
 
-    let identifier = TypeId::of::<T>();
-    if is!(identifier, bool) {
-        "boolean"
-    } else if is!(identifier, u8, u16, u32, u64, u128, usize) {
-        "natural number"
-    } else if is!(identifier, i8, i16, i32, i64, i128, isize) {
-        "integer number"
-    } else if is!(identifier, f32, f64) {
-        "rational number"
-    } else {
-        let mut name = any::type_name::<T>();
-        if let Some(split) = name.split('<').next() {
-            name = split;
+    fn parse(&self, state: Self::State, mut context: Context) -> Result<Self::State, Error> {
+        let mut context = context.with(
+            self.meta.clone(),
+            self.prefix,
+            self.case,
+            self.style.clone(),
+        );
+        match self.parse.parse(state, context.own()) {
+            Ok(state) => Ok(state),
+            Err(error) => Err(context.fill(error)),
         }
-        if let Some(split) = name.split(':').last() {
-            name = split;
+    }
+
+    fn finalize(&self, state: Self::State, mut context: Context) -> Result<Self::Value, Error> {
+        let mut context = context.with(
+            self.meta.clone(),
+            self.prefix,
+            self.case,
+            self.style.clone(),
+        );
+        match self.parse.finalize(state, context.own()) {
+            Ok(value) => Ok(value),
+            Err(error) => Err(context.fill(error)),
         }
-        name
+    }
+}
+
+impl<P: Parse, T, F: Fn(P::Value) -> T> Parse for Map<P, F> {
+    type State = P::State;
+    type Value = T;
+
+    fn initialize(&self, context: Context) -> Result<Self::State, Error> {
+        self.0.initialize(context)
+    }
+
+    fn parse(&self, state: Self::State, context: Context) -> Result<Self::State, Error> {
+        self.0.parse(state, context)
+    }
+
+    fn finalize(&self, state: Self::State, context: Context) -> Result<Self::Value, Error> {
+        Ok(self.1(self.0.finalize(state, context)?))
+    }
+}
+
+impl<P: Parse, T, E: Into<Error>, F: Fn(P::Value) -> Result<T, E>> Parse for TryMap<P, F> {
+    type State = P::State;
+    type Value = T;
+
+    fn initialize(&self, context: Context) -> Result<Self::State, Error> {
+        self.0.initialize(context)
+    }
+
+    fn parse(&self, state: Self::State, context: Context) -> Result<Self::State, Error> {
+        self.0.parse(state, context)
+    }
+
+    fn finalize(&self, state: Self::State, context: Context) -> Result<Self::Value, Error> {
+        self.1(self.0.finalize(state, context)?).map_err(Into::into)
+    }
+}
+
+impl<T, P: Parse<Value = Option<T>>> Parse for Require<P> {
+    type State = P::State;
+    type Value = T;
+
+    fn initialize(&self, context: Context) -> Result<Self::State, Error> {
+        self.0.initialize(context)
+    }
+
+    fn parse(&self, state: Self::State, context: Context) -> Result<Self::State, Error> {
+        self.0.parse(state, context)
+    }
+
+    fn finalize(&self, state: Self::State, mut context: Context) -> Result<Self::Value, Error> {
+        match self.0.finalize(state, context.own())? {
+            Some(value) => Ok(value),
+            None => Err(context.missing_required()),
+        }
+    }
+}
+
+impl<T, F: Fn() -> T, P: Parse<Value = Option<T>>> Parse for Default<P, F> {
+    type State = P::State;
+    type Value = T;
+
+    fn initialize(&self, context: Context) -> Result<Self::State, Error> {
+        self.0.initialize(context)
+    }
+
+    fn parse(&self, state: Self::State, context: Context) -> Result<Self::State, Error> {
+        self.0.parse(state, context)
+    }
+
+    fn finalize(&self, state: Self::State, context: Context) -> Result<Self::Value, Error> {
+        match self.0.finalize(state, context)? {
+            Some(value) => Ok(value),
+            None => Ok(self.1()),
+        }
+    }
+}
+
+impl<T: FromStr, P: Parse<Value = Option<T>>> Parse for Environment<P> {
+    type State = P::State;
+    type Value = P::Value;
+
+    fn initialize(&self, context: Context) -> Result<Self::State, Error> {
+        self.0.initialize(context)
+    }
+
+    fn parse(&self, state: Self::State, context: Context) -> Result<Self::State, Error> {
+        self.0.parse(state, context)
+    }
+
+    fn finalize(&self, state: Self::State, mut context: Context) -> Result<Self::Value, Error> {
+        match self.0.finalize(state, context.own())? {
+            Some(value) => Ok(Some(value)),
+            None => match context.environment.get(&self.1) {
+                Some(value) => match value.parse::<T>() {
+                    Ok(value) => Ok(Some(value)),
+                    Err(_) => Err(Error::FailedToParseEnvironmentVariable(
+                        self.1.clone(),
+                        value.clone(),
+                        context.type_name(),
+                        take(context.path),
+                    )),
+                },
+                None => Ok(None),
+            },
+        }
+    }
+}
+
+impl<T> Clone for Value<T> {
+    fn clone(&self) -> Self {
+        Self(PhantomData)
+    }
+}
+
+impl<T: FromStr + 'static> Parse for Value<T> {
+    type State = Option<T>;
+    type Value = Option<T>;
+
+    fn initialize(&self, _: Context) -> Result<Self::State, Error> {
+        Ok(None)
+    }
+
+    fn parse(&self, state: Self::State, context: Context) -> Result<Self::State, Error> {
+        if state.is_some() {
+            return Err(context.duplicate_option());
+        }
+
+        let argument = match context.arguments.pop_front() {
+            Some(Argument::String(argument)) => argument,
+            Some(Argument::Swizzle(argument)) => {
+                return Err(Error::InvalidSwizzleOption(format!("{}", argument).into()));
+            }
+            None if TypeId::of::<bool>() == TypeId::of::<T>() => match "true".parse::<T>() {
+                Ok(value) => return Ok(Some(value)),
+                Err(_) => return Err(context.failed_parse("true".into())),
+            },
+            None => return Err(context.missing_option()),
+        };
+        match argument.parse::<T>() {
+            Ok(value) => {
+                if context.is_valid(&argument) {
+                    Ok(Some(value))
+                } else {
+                    Err(context.invalid_option(argument))
+                }
+            }
+            Err(_) if TypeId::of::<bool>() == TypeId::of::<T>() => match "true".parse::<T>() {
+                Ok(value) => {
+                    context.arguments.push_front(Argument::String(argument));
+                    Ok(Some(value))
+                }
+                Err(_) => Err(context.failed_parse(argument)),
+            },
+            Err(_) => Err(context.failed_parse(argument)),
+        }
+    }
+
+    fn finalize(&self, state: Self::State, _: Context) -> Result<Self::Value, Error> {
+        Ok(state)
+    }
+}
+
+impl<P: Clone, I, N: Clone, F: Clone> Clone for Many<P, I, N, F> {
+    fn clone(&self) -> Self {
+        Self {
+            parse: self.parse.clone(),
+            per: self.per,
+            new: self.new.clone(),
+            add: self.add.clone(),
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<T, P: Parse<Value = Option<T>>, I, N: Fn() -> I, F: Fn(&mut I, T)> Parse for Many<P, I, N, F> {
+    type State = Option<I>;
+    type Value = Option<I>;
+
+    fn initialize(&self, _: Context) -> Result<Self::State, Error> {
+        Ok(None)
+    }
+
+    fn parse(&self, state: Self::State, mut context: Context) -> Result<Self::State, Error> {
+        let mut items = state.unwrap_or_else(&self.new);
+        let mut index = 0;
+        let count = self.per.map_or(usize::MAX, NonZeroUsize::get);
+        let error = loop {
+            if index >= count {
+                break None;
+            }
+            let state = match self.parse.initialize(context.own()) {
+                Ok(state) => state,
+                Err(error) => break Some(error),
+            };
+            let state = match self.parse.parse(state, context.own()) {
+                Ok(state) => state,
+                Err(error) => break Some(error),
+            };
+            let item = match self.parse.finalize(state, context.own()) {
+                Ok(Some(item)) => item,
+                Ok(None) => break None,
+                Err(error) => break Some(error),
+            };
+            (self.add)(&mut items, item);
+            index += 1;
+        };
+        if index == 0 {
+            match error {
+                Some(error) => Err(error),
+                None => Err(context.missing_option()),
+            }
+        } else {
+            Ok(Some(items))
+        }
+    }
+
+    fn finalize(&self, state: Self::State, _: Context) -> Result<Self::Value, Error> {
+        Ok(state)
     }
 }
 
@@ -1051,248 +1309,38 @@ impl KeyFinder<'_> {
     }
 }
 
-impl<P: Parse> Parse for Parser<P> {
-    type State = P::State;
-    type Value = P::Value;
-
-    fn initialize(&self, mut context: Context) -> Result<Self::State, Error> {
-        let mut context = context.with(
-            self.meta.clone(),
-            self.prefix,
-            self.case,
-            self.style.clone(),
-        );
-        match self.parse.initialize(context.own()) {
-            Ok(state) => Ok(state),
-            Err(error) => Err(context.fill(error)),
-        }
-    }
-
-    fn parse(&self, state: Self::State, mut context: Context) -> Result<Self::State, Error> {
-        let mut context = context.with(
-            self.meta.clone(),
-            self.prefix,
-            self.case,
-            self.style.clone(),
-        );
-        match self.parse.parse(state, context.own()) {
-            Ok(state) => Ok(state),
-            Err(error) => Err(context.fill(error)),
-        }
-    }
-
-    fn finalize(&self, state: Self::State, mut context: Context) -> Result<Self::Value, Error> {
-        let mut context = context.with(
-            self.meta.clone(),
-            self.prefix,
-            self.case,
-            self.style.clone(),
-        );
-        match self.parse.finalize(state, context.own()) {
-            Ok(value) => Ok(value),
-            Err(error) => Err(context.fill(error)),
-        }
-    }
+fn trim_pattern(pattern: &Regex) -> &str {
+    pattern
+        .as_str()
+        .trim_start_matches('^')
+        .trim_end_matches('$')
 }
 
-impl<P: Parse, T, F: Fn(P::Value) -> Result<T, Error>> Parse for Map<P, F> {
-    type State = P::State;
-    type Value = T;
-
-    fn initialize(&self, context: Context) -> Result<Self::State, Error> {
-        self.0.initialize(context)
-    }
-
-    fn parse(&self, state: Self::State, context: Context) -> Result<Self::State, Error> {
-        self.0.parse(state, context)
-    }
-
-    fn finalize(&self, state: Self::State, context: Context) -> Result<Self::Value, Error> {
-        self.1(self.0.finalize(state, context)?).map_err(Into::into)
-    }
-}
-
-impl<T, P: Parse<Value = Option<T>>> Parse for Require<P> {
-    type State = P::State;
-    type Value = T;
-
-    fn initialize(&self, context: Context) -> Result<Self::State, Error> {
-        self.0.initialize(context)
-    }
-
-    fn parse(&self, state: Self::State, context: Context) -> Result<Self::State, Error> {
-        self.0.parse(state, context)
-    }
-
-    fn finalize(&self, state: Self::State, mut context: Context) -> Result<Self::Value, Error> {
-        match self.0.finalize(state, context.own())? {
-            Some(value) => Ok(value),
-            None => Err(context.missing_required()),
-        }
-    }
-}
-
-impl<T, F: Fn() -> T, P: Parse<Value = Option<T>>> Parse for Default<P, F> {
-    type State = P::State;
-    type Value = T;
-
-    fn initialize(&self, context: Context) -> Result<Self::State, Error> {
-        self.0.initialize(context)
-    }
-
-    fn parse(&self, state: Self::State, context: Context) -> Result<Self::State, Error> {
-        self.0.parse(state, context)
-    }
-
-    fn finalize(&self, state: Self::State, context: Context) -> Result<Self::Value, Error> {
-        match self.0.finalize(state, context)? {
-            Some(value) => Ok(value),
-            None => Ok(self.1()),
-        }
-    }
-}
-
-impl<T: FromStr, P: Parse<Value = Option<T>>> Parse for Environment<P> {
-    type State = P::State;
-    type Value = P::Value;
-
-    fn initialize(&self, context: Context) -> Result<Self::State, Error> {
-        self.0.initialize(context)
-    }
-
-    fn parse(&self, state: Self::State, context: Context) -> Result<Self::State, Error> {
-        self.0.parse(state, context)
-    }
-
-    fn finalize(&self, state: Self::State, mut context: Context) -> Result<Self::Value, Error> {
-        match self.0.finalize(state, context.own())? {
-            Some(value) => Ok(Some(value)),
-            None => match context.environment.get(&self.1) {
-                Some(value) => match value.parse::<T>() {
-                    Ok(value) => Ok(Some(value)),
-                    Err(_) => Err(Error::FailedToParseEnvironmentVariable(
-                        self.1.clone(),
-                        value.clone(),
-                        context.type_name(),
-                        take(context.path),
-                    )),
-                },
-                None => Ok(None),
-            },
-        }
-    }
-}
-
-impl<T> Clone for Value<T> {
-    fn clone(&self) -> Self {
-        Self(PhantomData)
-    }
-}
-
-impl<T: FromStr + 'static> Parse for Value<T> {
-    type State = Option<T>;
-    type Value = Option<T>;
-
-    fn initialize(&self, _: Context) -> Result<Self::State, Error> {
-        Ok(None)
-    }
-
-    fn parse(&self, state: Self::State, context: Context) -> Result<Self::State, Error> {
-        if state.is_some() {
-            return Err(context.duplicate_option());
-        }
-
-        let argument = match context.arguments.pop_front() {
-            Some(Argument::String(argument)) => argument,
-            Some(Argument::Swizzle(argument)) => {
-                return Err(Error::InvalidSwizzleOption(format!("{}", argument).into()));
-            }
-            None if TypeId::of::<bool>() == TypeId::of::<T>() => match "true".parse::<T>() {
-                Ok(value) => return Ok(Some(value)),
-                Err(_) => return Err(context.failed_parse("true".into())),
-            },
-            None => return Err(context.missing_option()),
+fn type_name<T: 'static>() -> &'static str {
+    macro_rules! is {
+        ($left: expr $(, $rights: ident)+) => {
+            $($left == TypeId::of::<$rights>() || $left == TypeId::of::<Option<$rights>>() ||)+ false
         };
-        match argument.parse::<T>() {
-            Ok(value) => {
-                if context.is_valid(&argument) {
-                    Ok(Some(value))
-                } else {
-                    Err(context.invalid_option(argument))
-                }
-            }
-            Err(_) if TypeId::of::<bool>() == TypeId::of::<T>() => match "true".parse::<T>() {
-                Ok(value) => {
-                    context.arguments.push_front(Argument::String(argument));
-                    Ok(Some(value))
-                }
-                Err(_) => Err(context.failed_parse(argument)),
-            },
-            Err(_) => Err(context.failed_parse(argument)),
+    }
+
+    let identifier = TypeId::of::<T>();
+    if is!(identifier, bool) {
+        "boolean"
+    } else if is!(identifier, u8, u16, u32, u64, u128, usize) {
+        "natural number"
+    } else if is!(identifier, i8, i16, i32, i64, i128, isize) {
+        "integer number"
+    } else if is!(identifier, f32, f64) {
+        "rational number"
+    } else {
+        let mut name = any::type_name::<T>();
+        if let Some(split) = name.split('<').next() {
+            name = split;
         }
-    }
-
-    fn finalize(&self, state: Self::State, _: Context) -> Result<Self::Value, Error> {
-        Ok(state)
-    }
-}
-
-impl<P: Clone, I, N: Clone, F: Clone> Clone for Many<P, I, N, F> {
-    fn clone(&self) -> Self {
-        Self {
-            parse: self.parse.clone(),
-            per: self.per,
-            new: self.new.clone(),
-            add: self.add.clone(),
-            _marker: PhantomData,
+        if let Some(split) = name.split(':').last() {
+            name = split;
         }
-    }
-}
-
-impl<T, P: Parse<Value = Option<T>>, I, N: Fn() -> I, F: Fn(&mut I, T)> Parse for Many<P, I, N, F> {
-    type State = Option<I>;
-    type Value = Option<I>;
-
-    fn initialize(&self, _: Context) -> Result<Self::State, Error> {
-        Ok(None)
-    }
-
-    fn parse(&self, state: Self::State, mut context: Context) -> Result<Self::State, Error> {
-        let mut items = state.unwrap_or_else(&self.new);
-        let mut index = 0;
-        let count = self.per.map_or(usize::MAX, NonZeroUsize::get);
-        let error = loop {
-            if index >= count {
-                break None;
-            }
-            let state = match self.parse.initialize(context.own()) {
-                Ok(state) => state,
-                Err(error) => break Some(error),
-            };
-            let state = match self.parse.parse(state, context.own()) {
-                Ok(state) => state,
-                Err(error) => break Some(error),
-            };
-            let item = match self.parse.finalize(state, context.own()) {
-                Ok(Some(item)) => item,
-                Ok(None) => break None,
-                Err(error) => break Some(error),
-            };
-            (self.add)(&mut items, item);
-            index += 1;
-        };
-        if index == 0 {
-            match error {
-                Some(error) => Err(error),
-                None => Err(context.missing_option()),
-            }
-        } else {
-            Ok(Some(items))
-        }
-    }
-
-    fn finalize(&self, state: Self::State, _: Context) -> Result<Self::Value, Error> {
-        Ok(state)
+        name
     }
 }
 
@@ -1368,7 +1416,6 @@ macro_rules! at {
         }
 
         impl<T $(, $name: Into<T>)*> Any<T> for ($(Option<$name>,)*) {
-            #[inline]
             fn any(self) -> Option<T> {
                 $(if let Some(value) = self.$index {
                     return Some(value.into());

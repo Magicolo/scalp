@@ -60,7 +60,6 @@ impl Version {
         })
     }
 
-    #[inline]
     pub fn meta(&self) -> &Meta {
         &self.0
     }
@@ -80,7 +79,6 @@ impl Author {
         })
     }
 
-    #[inline]
     pub fn meta(&self) -> &Meta {
         &self.0
     }
@@ -100,7 +98,6 @@ impl License {
         })
     }
 
-    #[inline]
     pub fn meta(&self) -> &Meta {
         &self.0
     }
@@ -401,11 +398,11 @@ impl<'a, 'b> Helper<'a, 'b> {
         )?;
         if width == 0 {
             width += prefix(helper.own())?;
-            width += helper.write("Usage:")?;
-            for key in root.key().as_ref().into_iter().chain(helper.path) {
-                width += helper.write(' ')?;
-                width += helper.write(key)?;
-            }
+            // width += helper.write("Usage:")?;
+            // for key in root.key().as_ref().into_iter().chain(helper.path) {
+            //     width += helper.write(' ')?;
+            //     width += helper.write(key)?;
+            // }
 
             match Meta::descend(
                 metas,
@@ -800,24 +797,20 @@ impl<'a, 'b> Helper<'a, 'b> {
         Ok(self.indent_with(width))
     }
 
-    #[inline]
     fn write(&mut self, value: impl Format) -> Result<usize, fmt::Error> {
         let width = value.width();
         value.format(self.format)?;
         Ok(width)
     }
 
-    #[inline]
     fn write_begin(&mut self, item: Item) -> Result<usize, fmt::Error> {
         self.write(self.style.begin(item))
     }
 
-    #[inline]
     fn write_end(&mut self, item: Item) -> Result<usize, fmt::Error> {
         self.write(self.style.end(item))
     }
 
-    #[inline]
     fn write_line(&mut self, value: impl Format) -> Result<usize, fmt::Error> {
         let width = self.write(value)?;
         writeln!(self.format)?;

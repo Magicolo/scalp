@@ -14,14 +14,14 @@ build = "build.rs"
 rust-version = "1.70.0"
 
 [dependencies]
-termion = "4.0.2"
-orn = "0.4.3"
+termion = "4.0.3"
+orn = "0.5.2"
 regex = "1.11.0"
 
 [dev-dependencies]
 criterion = "0.5.1"
 skeptic = "0.13.7"
-checkito = "2.0.0"
+checkito = "3.2.2"
 
 [build-dependencies]
 skeptic = "0.13.7"

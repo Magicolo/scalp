@@ -17,6 +17,20 @@ pub use crate::{
     parse::{Parse, Parser},
     scope::Scope,
 };
+use core::str::FromStr;
+use parse::Node;
+
+pub fn verb() -> Parser<Node<parse::At>> {
+    Parser::verb()
+}
+
+pub fn group() -> Parser<parse::At> {
+    Parser::group()
+}
+
+pub fn option<T: FromStr + 'static>() -> Parser<parse::Value<T>> {
+    Parser::option()
+}
 
 /*
     FEATURES:
@@ -26,6 +40,8 @@ pub use crate::{
     - Nearest suggestions on typos.
 
     TODO:
+    - Add a test to check if `At` still works with depth > 1.
+        - verb(option(), group(group(option())), option(), group(option(), group(option()))) -> Try to set all options.
     - Can `help::scope` be improved to reduce allocations?
     - Make `Termion` a facultative dependency (use cargo features).
     - Improve the MASK/SHIFT implementation of `At`.
