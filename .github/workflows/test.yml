@@ -10,46 +10,70 @@ jobs:
   build:
     runs-on: ubuntu-latest
     container: 
-      image: rust:latest
+      image: ghcr.io/magicolo/rust
     steps:
     - uses: actions/checkout@v4
-    - name: Run
-      run: cargo build --release --verbose
+    - run: |
+        cargo hack build --release --lib --bins --benches --tests --verbose --feature-powerset
+        cargo hack build --release --lib --bins --benches --tests --verbose --feature-powerset --rust-version
+        cargo hack build --release --examples --verbose
   test:
     runs-on: ubuntu-latest
     container: 
-      image: rust:latest
+      image: ghcr.io/magicolo/rust
     steps:
     - uses: actions/checkout@v4
-    - name: Run
-      run: cargo test --release --verbose
+    - run: |
+        cargo hack test --release --lib --bins --benches --tests --verbose --feature-powerset
+        cargo hack test --release --lib --bins --benches --tests --verbose --feature-powerset --rust-version
+        cargo hack test --release --doc --verbose --feature-powerset
+        cargo hack test --release --examples --verbose
   clippy:
     runs-on: ubuntu-latest
     container: 
-      image: rust:latest
+      image: ghcr.io/magicolo/rust
     steps:
     - uses: actions/checkout@v4
-    - name: Install
-      run: rustup component add clippy
-    - name: Run
-      run: cargo clippy --release --verbose -- -D warnings
+    - run: |
+        cargo hack clippy --release --lib --bins --benches --tests --verbose --feature-powerset -- --deny warnings
+        cargo hack clippy --release --examples --verbose -- --deny warnings
+  doc:
+    runs-on: ubuntu-latest
+    container: 
+      image: ghcr.io/magicolo/rust
+    steps:
+    - uses: actions/checkout@v4
+    - run: cargo hack doc --no-deps --release --verbose --feature-powerset
+  semver:
+    runs-on: ubuntu-latest
+    container: 
+      image: ghcr.io/magicolo/rust
+    steps:
+    - uses: actions/checkout@v4
+    - run: cargo semver-checks --verbose
+  msrv:
+    runs-on: ubuntu-latest
+    container: 
+      image: ghcr.io/magicolo/rust
+    steps:
+    - uses: actions/checkout@v4
+    - run: cargo msrv verify
   audit:
     runs-on: ubuntu-latest
     container: 
-      image: rust:latest
+      image: ghcr.io/magicolo/rust
     steps:
     - uses: actions/checkout@v4
-    - name: Install
-      run: cargo install cargo-audit
-    - name: Run
-      run: cargo audit
-  # minimal-version:
-  #   runs-on: ubuntu-latest
-  #   container: 
-  #     image: rust:latest
-  #   steps:
-  #   - uses: actions/checkout@v4
-  #   - name: Install
-  #     run: cargo install cargo-msrv
-  #   - name: Run
-  #     run: cargo msrv verify
+    - run: cargo audit
+  coverage:
+    runs-on: ubuntu-latest
+    container: 
+      image: ghcr.io/magicolo/rust
+    steps:
+    - uses: actions/checkout@v4
+    - env:
+        COVERAGE: 50
+      run: |
+        cargo llvm-cov --all-targets --all-features --release --summary-only --json --verbose |
+        jq '[.data[0].totals | .functions.percent, .instantiations.percent, .lines.percent, .regions.percent] | add / length' |
+        awk -v threshold=$COVERAGE '{ coverage = int($1); if (coverage > threshold) { print "Coverage "coverage"% is above threshold "threshold"%."; exit 0; } else { print "Expected coverage "coverage"% to be at least "threshold"%."; exit 1; } }'

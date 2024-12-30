@@ -13,9 +13,8 @@ pub enum Error {
     Author(Option<Author>),
     License(Option<License>),
 
-    MissingOptionValue(Option<Text>, Vec<Key>),
-    MissingRequiredOption(Vec<Key>),
-    MissingRequiredValue(Vec<Key>, Option<Text>),
+    MissingValue(Option<Text>, Vec<Key>),
+    MissingRequired(Option<Text>, Vec<Key>),
     DuplicateOption(Vec<Key>),
     UnrecognizedArgument(Text, Vec<(Text, usize)>),
     ExcessArguments(Vec<Text>),
@@ -25,6 +24,7 @@ pub enum Error {
     Other(Text),
     FailedToParseEnvironmentVariable(Text, Text, Option<Text>, Vec<Key>),
     FailedToParseOptionValue(Text, Option<Text>, Vec<Key>),
+    DuplicateParse(Vec<Key>),
     DuplicateVerb(Vec<Key>),
     GroupNestingLimitOverflow,
     InvalidIndex(usize),
@@ -93,12 +93,17 @@ impl fmt::Display for Error {
                 }
                 write!(f, "'.")?;
             }
-            Error::MissingOptionValue(type_name, path) => {
+            Error::MissingValue(type_name, path) => {
                 write!(f, "Missing value")?;
                 if let Some(type_name) = type_name {
                     write!(f, " of type '{type_name}'")?;
                 }
                 write_join(f, " for option '", "'", " ", path)?;
+                write!(f, ".")?;
+            }
+            Error::DuplicateParse(path) => {
+                write!(f, "Duplicate parse")?;
+                write_join(f, " '", "'", " ", path)?;
                 write!(f, ".")?;
             }
             Error::DuplicateOption(path) => {
@@ -111,12 +116,7 @@ impl fmt::Display for Error {
                 write_join(f, " '", "'", " ", path)?;
                 write!(f, ".")?;
             }
-            Error::MissingRequiredOption(path) => {
-                write!(f, "Missing required option")?;
-                write_join(f, " '", "'", " ", path)?;
-                write!(f, ".")?;
-            }
-            Error::MissingRequiredValue(path, type_name) => {
+            Error::MissingRequired(type_name, path) => {
                 write!(f, "Missing required value")?;
                 if let Some(type_name) = type_name {
                     write!(f, " of type '{type_name}'")?;

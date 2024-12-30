@@ -5,7 +5,7 @@ authors = ["Magicolo <magicololand@gmail.com>"]
 edition = "2021"
 readme = "README.md"
 documentation = "https://docs.rs/scalp/latest/scalp/"
-description = "A declarative parsing library for pretty and highly customizable command-line interfaces."
+description = "The **S**weet **C**ommand **L**ine **P**arsing library for pretty and highly customizable command-line interfaces. It provides a composable and extensible `Parse` trait that ensures comparative performance to a macro-full approach while offering greater flexibility and understandability."
 license = "MIT"
 repository = "https://github.com/Magicolo/scalp"
 keywords = ["cli", "parse", "command-line", "terminal", "pretty"]
@@ -15,13 +15,13 @@ rust-version = "1.70.0"
 
 [dependencies]
 termion = "4.0.3"
-orn = "0.5.2"
-regex = "1.11.0"
+orn = "0.6.1"
+regex = "1.11.1"
 
 [dev-dependencies]
 criterion = "0.5.1"
 skeptic = "0.13.7"
-checkito = "3.2.2"
+checkito = "3.2.3"
 
 [build-dependencies]
 skeptic = "0.13.7"

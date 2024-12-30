@@ -14,23 +14,9 @@ pub use crate::{
     case::Case,
     error::Error,
     meta::Options,
-    parse::{Parse, Parser},
+    parse::{Parse, Parser, group, option, verb},
     scope::Scope,
 };
-use core::str::FromStr;
-use parse::Node;
-
-pub fn verb() -> Parser<Node<parse::At>> {
-    Parser::verb()
-}
-
-pub fn group() -> Parser<parse::At> {
-    Parser::group()
-}
-
-pub fn option<T: FromStr + 'static>() -> Parser<parse::Value<T>> {
-    Parser::option()
-}
 
 /*
     FEATURES:
@@ -65,25 +51,49 @@ pub fn option<T: FromStr + 'static>() -> Parser<parse::Value<T>> {
 
 #[macro_export]
 macro_rules! header {
-    () => {
-        |builder: $crate::Builder<$crate::scope::Verb, _>| $crate::header!(builder)
-    };
-    ($builder: expr) => {
-        $builder.pipe(|mut builder| {
-            builder = builder.name(env!("CARGO_BIN_NAME").trim());
-            builder = builder.version(env!("CARGO_PKG_VERSION").trim());
-            builder = builder.license(
+    () => {{
+        let parser = $crate::parse::group()
+            .name(env!("CARGO_BIN_NAME").trim())
+            .version(env!("CARGO_PKG_VERSION").trim())
+            .license(
                 env!("CARGO_PKG_LICENSE").trim(),
                 env!("CARGO_PKG_LICENSE_FILE").trim(),
-            );
-            builder = env!("CARGO_PKG_AUTHORS")
-                .trim()
-                .split(':')
-                .fold(builder, |builder, author| builder.author(author.trim()));
-            builder = builder.summary(env!("CARGO_PKG_DESCRIPTION").trim());
-            builder = builder.home(env!("CARGO_PKG_HOMEPAGE").trim());
-            builder = builder.repository(env!("CARGO_PKG_REPOSITORY").trim());
-            builder
-        })
-    };
+            )
+            .summary(env!("CARGO_PKG_DESCRIPTION").trim())
+            .home(env!("CARGO_PKG_HOMEPAGE").trim())
+            .repository(env!("CARGO_PKG_REPOSITORY").trim());
+        env!("CARGO_PKG_AUTHORS")
+            .trim()
+            .split(':')
+            .fold(parser, |parser, author| parser.author(author.trim()))
+    }};
 }
+
+#[test]
+fn karl() -> Result<(), Error> {
+    let value = option::<usize>().name("a").parse_with([""], [("", "")])?;
+    assert_eq!(value, None);
+    Ok(())
+}
+
+// #[test]
+// fn boba() -> Result<(), Error> {
+//     let value = option::<usize>()
+//         .name("a")
+//         .require()
+//         .default(1usize)
+//         .parse_with([""], [("", "")])?;
+//     assert_eq!(value, 1);
+//     Ok(())
+// }
+
+// #[test]
+// fn fett() -> Result<(), Error> {
+//     let value = option::<usize>()
+//         .name("a")
+//         .require()
+//         .default(1usize)
+//         .parse_with(["2"], [("", "")])?;
+//     assert_eq!(value, 2);
+//     Ok(())
+// }

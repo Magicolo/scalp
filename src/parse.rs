@@ -4,6 +4,7 @@ use crate::{
     error::Error,
     help,
     meta::{Meta, Text},
+    scope,
     spell::Spell,
     stack::Stack,
     style::{Format, Style, Termion},
@@ -14,6 +15,7 @@ use regex::Regex;
 use std::{
     any::{self, TypeId},
     collections::{HashMap, VecDeque},
+    default,
     fmt::{self, Write},
     mem::take,
     ops::ControlFlow,
@@ -35,8 +37,9 @@ pub struct Context<'a> {
 }
 
 #[derive(Clone)]
-pub struct Parser<P> {
+pub struct Parser<P, S> {
     pub(crate) parse: P,
+    pub(crate) scope: S,
     pub(crate) meta: Arc<Meta>,
     pub(crate) prefix: Option<char>,
     pub(crate) case: Option<Case>,
@@ -46,7 +49,6 @@ pub struct Parser<P> {
 #[derive(Clone)]
 pub struct Node<P>(pub(crate) P);
 
-#[derive(Default)]
 pub struct Value<T>(pub(crate) PhantomData<T>);
 
 pub struct Many<P, I, N, F> {
@@ -69,6 +71,8 @@ pub struct Default<P, T>(pub(crate) P, pub(crate) T);
 pub struct Environment<P>(pub(crate) P, pub(crate) Text);
 #[derive(Clone)]
 pub struct At<P = ()>(pub(crate) P);
+#[derive(Clone)]
+pub struct One<P>(pub(crate) P);
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Key {
@@ -101,7 +105,6 @@ struct KeyFinder<'a> {
     option: bool,
     position: usize,
     swizzle: bool,
-    root: bool,
 }
 
 enum KeyResult {
@@ -128,6 +131,11 @@ pub trait Any<T> {
     fn any(self) -> Option<T>;
 }
 
+pub trait Flag {}
+
+impl Flag for Option<bool> {}
+impl Flag for bool {}
+
 impl Name {
     pub fn len(&self, prefix: bool, case: bool) -> usize {
         self.chars(prefix, case).count()
@@ -146,6 +154,10 @@ impl Name {
 }
 
 impl Argument {
+    pub fn string(value: impl Into<Text>) -> Option<Self> {
+        Some(Argument::String(Text::filter(value).ok()?))
+    }
+
     pub fn chars(&self) -> impl Iterator<Item = char> + '_ {
         use or2::Or;
         match self {
@@ -243,7 +255,24 @@ impl<T: Stack> Stack for At<T> {
     }
 }
 
-impl<'a> Context<'a> {
+pub fn verb() -> Parser<Node<At>, scope::Verb> {
+    Parser::new(Node(At(())), scope::Verb::new(), Meta::Verb(Vec::new()))
+}
+
+pub fn group() -> Parser<At, scope::Group> {
+    Parser::new(At(()), scope::Group::new(), Meta::Group(Vec::new()))
+}
+
+pub fn option<T: FromStr + 'static>() -> Parser<Value<T>, scope::Option> {
+    Parser::new(
+        Value(PhantomData),
+        scope::Option::new(),
+        Meta::Option(Vec::new()),
+    )
+    .meta(Meta::Type(type_name::<T>().into()))
+}
+
+impl Context<'_> {
     fn own(&mut self) -> Context {
         Context {
             arguments: self.arguments,
@@ -278,7 +307,6 @@ impl<'a> Context<'a> {
             option: false,
             swizzle: false,
             position: *position,
-            root: true,
         }
         .find();
 
@@ -386,16 +414,19 @@ impl<'a> Context<'a> {
     }
 
     fn missing_option(self) -> Error {
-        Error::MissingOptionValue(self.type_name(), take(self.path))
+        Error::MissingValue(self.type_name(), take(self.path))
     }
 
-    fn missing_required(self) -> Error {
-        let path = take(self.path);
-        if let Meta::Option(_) = self.meta.as_ref() {
-            Error::MissingRequiredOption(path)
-        } else {
-            Error::MissingRequiredValue(path, self.meta.require())
+    fn duplicate(self) -> Error {
+        match self.meta.as_ref() {
+            Meta::Option(_) => self.duplicate_option(),
+            Meta::Verb(_) => self.duplicate_verb(),
+            _ => self.duplicate_parse(),
         }
+    }
+
+    fn duplicate_parse(self) -> Error {
+        Error::DuplicateParse(take(self.path))
     }
 
     fn duplicate_verb(self) -> Error {
@@ -446,10 +477,11 @@ impl<'a> Context<'a> {
     }
 }
 
-impl<P> Parser<P> {
-    fn new(parse: P, meta: Meta) -> Self {
+impl<P, S> Parser<P, S> {
+    fn new(parse: P, scope: S, meta: Meta) -> Self {
         Self {
             parse,
+            scope,
             meta: Arc::new(meta),
             prefix: None,
             case: None,
@@ -467,59 +499,59 @@ impl<P> Parser<P> {
         self
     }
 
-    pub fn style<S: Style + 'static>(mut self, style: S) -> Self {
+    pub fn style<T: Style + 'static>(mut self, style: T) -> Self {
         self.style = Some(Arc::new(style));
         self
     }
 
-    pub fn name(mut self, name: impl Into<Text>) -> Result<Self, Error> {
-        self.with_meta(|meta| match meta {
-            Meta::Option(metas) => {
-                let name = name.into();
-                if name
-                    .chars()
-                    .any(|letter| letter.is_whitespace() || !letter.is_ascii_alphanumeric())
-                {
-                    Err(Error::InvalidOptionName(name))
-                } else {
-                    metas.push(Meta::Name(name));
-                    Ok(())
-                }
-            }
-            Meta::Verb(metas) => {
-                let name = name.into();
-                if name
-                    .chars()
-                    .any(|letter| letter.is_whitespace() || !letter.is_ascii_alphanumeric())
-                {
-                    Err(Error::InvalidVerbName(name))
-                } else {
-                    metas.push(Meta::Name(name));
-                    Ok(())
-                }
-            }
-            Meta::Group(metas) => {
-                let name = name.into();
-                if !name.chars().all(char::is_whitespace) {
-                    metas.push(Meta::Name(name));
-                }
-                Ok(())
-            }
-            meta => Err(Error::InvalidLeafMeta(Clone::clone(meta))),
-        })?;
-        Ok(self)
+    pub fn name(self, name: impl Into<Text>) -> Self {
+        self.try_meta(Text::filter(name).map(Meta::Name).ok())
+    }
+
+    pub fn version(self, version: impl Into<Text>) -> Self {
+        self.try_meta(Text::filter(version).map(Meta::Version).ok())
     }
 
     pub fn help(self, help: impl Into<Text>) -> Self {
-        let help = help.into();
-        if help.chars().all(char::is_whitespace) {
-            self
-        } else {
-            self.meta(Meta::Help(help))
+        self.try_meta(Text::filter(help).map(Meta::Help).ok())
+    }
+
+    pub fn line(self) -> Self {
+        self.meta(Meta::Line)
+    }
+
+    pub fn note(self, note: impl Into<Text>) -> Self {
+        self.try_meta(Text::filter(note).map(Meta::Note).ok())
+    }
+
+    pub fn summary(self, summary: impl Into<Text>) -> Self {
+        self.try_meta(Text::filter(summary).map(Meta::Summary).ok())
+    }
+
+    pub fn license(self, name: impl Into<Text>, file: impl Into<Text>) -> Self {
+        match (Text::filter(name), Text::filter(file)) {
+            (Err(_), Err(_)) => self,
+            (Ok(name) | Err(name), Ok(file) | Err(file)) => self.meta(Meta::License(name, file)),
         }
     }
 
-    pub fn child<Q>(self, parser: Parser<Q>) -> Parser<P::Push<Parser<Q>>>
+    pub fn author(self, author: impl Into<Text>) -> Self {
+        self.try_meta(Text::filter(author).map(Meta::Author).ok())
+    }
+
+    pub fn repository(self, repository: impl Into<Text>) -> Self {
+        self.try_meta(Text::filter(repository).map(Meta::Repository).ok())
+    }
+
+    pub fn home(self, home: impl Into<Text>) -> Self {
+        self.try_meta(Text::filter(home).map(Meta::Home).ok())
+    }
+
+    pub fn usage(self, usage: impl Into<Text>) -> Self {
+        self.try_meta(Text::filter(usage).map(Meta::Usage).ok())
+    }
+
+    pub fn node<Q, T>(self, parser: Parser<Q, T>) -> Parser<P::Push<Parser<Q, T>>, S>
     where
         P: Stack,
     {
@@ -530,6 +562,40 @@ impl<P> Parser<P> {
     pub fn meta(mut self, meta: Meta) -> Self {
         self.with_metas(|metas| metas.push(meta));
         self
+    }
+
+    pub fn try_meta(self, meta: Option<Meta>) -> Self {
+        match meta {
+            Some(meta) => self.meta(meta),
+            None => self,
+        }
+    }
+
+    pub fn position(self) -> Self {
+        self.meta(Meta::Position)
+    }
+
+    pub fn swizzle(self) -> Self
+    where
+        P: Parse,
+        <P as Parse>::Value: Flag,
+    {
+        self.meta(Meta::Swizzle)
+    }
+
+    pub fn options(self, options: impl IntoIterator<Item = Options>) -> Self {
+        options
+            .into_iter()
+            .map(Meta::Options)
+            .fold(self, Self::meta)
+    }
+
+    pub fn any<T>(self) -> Parser<impl Parse<Value = Option<T>>, S>
+    where
+        P: Parse,
+        P::Value: Any<T>,
+    {
+        self.map(Any::any)
     }
 
     fn with_meta<T>(&mut self, with: impl FnOnce(&mut Meta) -> T) -> T {
@@ -551,9 +617,10 @@ impl<P> Parser<P> {
         })
     }
 
-    fn map_parse<Q>(self, map: impl FnOnce(P) -> Q) -> Parser<Q> {
+    fn map_parse<Q>(self, map: impl FnOnce(P) -> Q) -> Parser<Q, S> {
         Parser {
             parse: map(self.parse),
+            scope: self.scope,
             meta: self.meta,
             prefix: self.prefix,
             case: self.case,
@@ -562,7 +629,7 @@ impl<P> Parser<P> {
     }
 }
 
-impl<P: Parse> Parser<P> {
+impl<P: Parse, S> Parser<P, S> {
     pub fn parse(&self) -> Result<P::Value, Error> {
         self.parse_with(std::env::args().skip(1), std::env::vars())
     }
@@ -572,16 +639,10 @@ impl<P: Parse> Parser<P> {
         arguments: impl IntoIterator<Item = A>,
         environment: impl IntoIterator<Item = (K, V)>,
     ) -> Result<P::Value, Error> {
-        let mut arguments = arguments
-            .into_iter()
-            .map(Into::into)
-            .filter(|argument| !argument.chars().all(char::is_whitespace))
-            .map(Argument::String)
-            .collect();
+        let mut arguments = arguments.into_iter().filter_map(Argument::string).collect();
         let mut environment = environment
             .into_iter()
-            .map(|(key, value)| (key.into(), value.into()))
-            .filter(|(key, _)| !key.chars().all(char::is_whitespace))
+            .filter_map(|(key, value)| Some((Text::filter(key).ok()?, Text::filter(value).ok()?)))
             .collect();
         let mut context = Context {
             arguments: &mut arguments,
@@ -613,34 +674,43 @@ impl<P: Parse> Parser<P> {
         }
     }
 
-    pub fn map<T, F: Fn(P::Value) -> T>(self, map: F) -> Parser<Map<P, F>> {
+    pub fn map<T, F: Fn(P::Value) -> T>(self, map: F) -> Parser<Map<P, F>, S> {
         self.map_parse(|parse| Map(parse, map))
     }
 
     pub fn try_map<T, E: Into<Error>, F: Fn(P::Value) -> Result<T, E>>(
         self,
         map: F,
-    ) -> Parser<TryMap<P, F>> {
+    ) -> Parser<TryMap<P, F>, S> {
         self.map_parse(|parse| TryMap(parse, map))
     }
-}
 
-impl Parser<Node<At>> {
-    pub fn verb() -> Self {
-        Parser::new(Node(At(())), Meta::Verb(Vec::new()))
+    pub fn require(self) -> Parser<Require<P>, S> {
+        self.meta(Meta::Require).map_parse(|parse| Require(parse))
     }
-}
 
-impl Parser<At> {
-    pub fn group() -> Self {
-        Parser::new(At(()), Meta::Group(Vec::new()))
+    pub fn default<T: Clone + fmt::Debug>(
+        self,
+        default: impl Into<T>,
+    ) -> Parser<Default<P, impl Fn() -> T>, S> {
+        let default = default.into();
+        let format = format!("{default:?}");
+        self.default_with(move || default.clone(), format)
     }
-}
 
-impl<T: FromStr + 'static> Parser<Value<T>> {
-    pub fn option() -> Self {
-        Parser::new(Value(PhantomData), Meta::Option(Vec::new()))
-            .meta(Meta::Type(type_name::<T>().into()))
+    pub fn default_with<T, F: Fn() -> T>(
+        self,
+        default: F,
+        format: impl Into<Text>,
+    ) -> Parser<Default<P, F>, S> {
+        self.meta(Meta::Default(format.into()))
+            .map_parse(|parse| Default(parse, default))
+    }
+
+    pub fn environment<T: FromStr>(self, variable: impl Into<Text>) -> Parser<Environment<P>, S> {
+        let variable = variable.into();
+        self.meta(Meta::Environment(variable.clone()))
+            .map_parse(|inner| Environment(inner, variable))
     }
 }
 
@@ -695,6 +765,30 @@ impl<P: Parse + ?Sized> Parse for &mut P {
     }
 }
 
+impl<P: Parse> Parse for One<P> {
+    type State = Option<P::Value>;
+    type Value = Option<P::Value>;
+
+    fn initialize(&self, _: Context) -> Result<Self::State, Error> {
+        Ok(None)
+    }
+
+    fn parse(&self, state: Self::State, mut context: Context) -> Result<Self::State, Error> {
+        match state {
+            Some(_) => Err(context.duplicate()),
+            None => {
+                let state = self.0.initialize(context.own())?;
+                let state = self.0.parse(state, context.own())?;
+                Ok(Some(self.0.finalize(state, context.own())?))
+            }
+        }
+    }
+
+    fn finalize(&self, state: Self::State, _: Context) -> Result<Self::Value, Error> {
+        Ok(state)
+    }
+}
+
 impl<P: Parse> Parse for Node<P> {
     type State = Option<P::Value>;
     type Value = Option<P::Value>;
@@ -708,14 +802,14 @@ impl<P: Parse> Parse for Node<P> {
             return Err(context.duplicate_verb());
         }
 
-        let mut outer: <P as Parse>::State = self.0.initialize(context.own())?;
+        let mut inner = self.0.initialize(context.own())?;
         let mut position = 0;
         while let Some(key) = context.key(&mut position)? {
             context.path.push(key);
-            outer = self.0.parse(outer, context.own())?;
+            inner = self.0.parse(inner, context.own())?;
             context.path.pop();
         }
-        Ok(Some(self.0.finalize(outer, context.own())?))
+        Ok(Some(self.0.finalize(inner, context.own())?))
     }
 
     fn finalize(&self, state: Self::State, _: Context) -> Result<Self::Value, Error> {
@@ -723,7 +817,7 @@ impl<P: Parse> Parse for Node<P> {
     }
 }
 
-impl<P: Parse> Parse for Parser<P> {
+impl<P: Parse, S> Parse for Parser<P, S> {
     type State = P::State;
     type Value = P::Value;
 
@@ -734,10 +828,9 @@ impl<P: Parse> Parse for Parser<P> {
             self.case,
             self.style.clone(),
         );
-        match self.parse.initialize(context.own()) {
-            Ok(state) => Ok(state),
-            Err(error) => Err(context.fill(error)),
-        }
+        self.parse
+            .initialize(context.own())
+            .map_err(|error| context.fill(error))
     }
 
     fn parse(&self, state: Self::State, mut context: Context) -> Result<Self::State, Error> {
@@ -747,10 +840,9 @@ impl<P: Parse> Parse for Parser<P> {
             self.case,
             self.style.clone(),
         );
-        match self.parse.parse(state, context.own()) {
-            Ok(state) => Ok(state),
-            Err(error) => Err(context.fill(error)),
-        }
+        self.parse
+            .parse(state, context.own())
+            .map_err(|error| context.fill(error))
     }
 
     fn finalize(&self, state: Self::State, mut context: Context) -> Result<Self::Value, Error> {
@@ -760,10 +852,9 @@ impl<P: Parse> Parse for Parser<P> {
             self.case,
             self.style.clone(),
         );
-        match self.parse.finalize(state, context.own()) {
-            Ok(value) => Ok(value),
-            Err(error) => Err(context.fill(error)),
-        }
+        self.parse
+            .finalize(state, context.own())
+            .map_err(|error| context.fill(error))
     }
 }
 
@@ -801,47 +892,7 @@ impl<P: Parse, T, E: Into<Error>, F: Fn(P::Value) -> Result<T, E>> Parse for Try
     }
 }
 
-impl<T, P: Parse<Value = Option<T>>> Parse for Require<P> {
-    type State = P::State;
-    type Value = T;
-
-    fn initialize(&self, context: Context) -> Result<Self::State, Error> {
-        self.0.initialize(context)
-    }
-
-    fn parse(&self, state: Self::State, context: Context) -> Result<Self::State, Error> {
-        self.0.parse(state, context)
-    }
-
-    fn finalize(&self, state: Self::State, mut context: Context) -> Result<Self::Value, Error> {
-        match self.0.finalize(state, context.own())? {
-            Some(value) => Ok(value),
-            None => Err(context.missing_required()),
-        }
-    }
-}
-
-impl<T, F: Fn() -> T, P: Parse<Value = Option<T>>> Parse for Default<P, F> {
-    type State = P::State;
-    type Value = T;
-
-    fn initialize(&self, context: Context) -> Result<Self::State, Error> {
-        self.0.initialize(context)
-    }
-
-    fn parse(&self, state: Self::State, context: Context) -> Result<Self::State, Error> {
-        self.0.parse(state, context)
-    }
-
-    fn finalize(&self, state: Self::State, context: Context) -> Result<Self::Value, Error> {
-        match self.0.finalize(state, context)? {
-            Some(value) => Ok(value),
-            None => Ok(self.1()),
-        }
-    }
-}
-
-impl<T: FromStr, P: Parse<Value = Option<T>>> Parse for Environment<P> {
+impl<P: Parse> Parse for Require<P> {
     type State = P::State;
     type Value = P::Value;
 
@@ -854,26 +905,92 @@ impl<T: FromStr, P: Parse<Value = Option<T>>> Parse for Environment<P> {
     }
 
     fn finalize(&self, state: Self::State, mut context: Context) -> Result<Self::Value, Error> {
-        match self.0.finalize(state, context.own())? {
-            Some(value) => Ok(Some(value)),
-            None => match context.environment.get(&self.1) {
-                Some(value) => match value.parse::<T>() {
-                    Ok(value) => Ok(Some(value)),
+        match self.0.finalize(state, context.own()) {
+            Ok(value) => Ok(value),
+            Err(Error::MissingValue(type_name, path)) => {
+                Err(Error::MissingRequired(type_name, path))
+            }
+            Err(error) => Err(error),
+        }
+    }
+}
+
+impl<P: Parse, F: Fn() -> P::Value> Parse for Default<P, F> {
+    type State = P::State;
+    type Value = P::Value;
+
+    fn initialize(&self, context: Context) -> Result<Self::State, Error> {
+        self.0.initialize(context)
+    }
+
+    fn parse(&self, state: Self::State, context: Context) -> Result<Self::State, Error> {
+        self.0.parse(state, context)
+    }
+
+    fn finalize(&self, state: Self::State, mut context: Context) -> Result<Self::Value, Error> {
+        match self.0.finalize(state, context.own()) {
+            Ok(value) => Ok(value),
+            Err(Error::MissingValue(_, path) | Error::MissingRequired(_, path)) => {
+                // Restore that path in the context.
+                *context.path = path;
+                Ok(self.1())
+            }
+            Err(error) => Err(error),
+        }
+    }
+}
+
+impl<P: Parse> Parse for Environment<P>
+where
+    P::Value: FromStr,
+{
+    type State = P::State;
+    type Value = P::Value;
+
+    fn initialize(&self, context: Context) -> Result<Self::State, Error> {
+        self.0.initialize(context)
+    }
+
+    fn parse(&self, state: Self::State, context: Context) -> Result<Self::State, Error> {
+        self.0.parse(state, context)
+    }
+
+    fn finalize(&self, state: Self::State, mut context: Context) -> Result<Self::Value, Error> {
+        let (error, value) = match self.0.finalize(state, context.own()) {
+            Ok(value) => return Ok(value),
+            Err(error) => match context.environment.get(&self.1) {
+                Some(value) => (error, value),
+                None => return Err(error),
+            },
+        };
+        match error {
+            Error::MissingValue(type_name, path) | Error::MissingRequired(type_name, path) => {
+                match value.parse::<P::Value>() {
+                    Ok(value) => {
+                        *context.path = path;
+                        Ok(value)
+                    }
                     Err(_) => Err(Error::FailedToParseEnvironmentVariable(
                         self.1.clone(),
                         value.clone(),
-                        context.type_name(),
-                        take(context.path),
+                        type_name,
+                        path,
                     )),
-                },
-                None => Ok(None),
-            },
+                }
+            }
+            error => Err(error),
         }
     }
 }
 
 impl<T> Clone for Value<T> {
     fn clone(&self) -> Self {
+        Self(PhantomData)
+    }
+}
+
+impl<T> default::Default for Value<T> {
+    fn default() -> Self {
         Self(PhantomData)
     }
 }
@@ -896,27 +1013,18 @@ impl<T: FromStr + 'static> Parse for Value<T> {
             Some(Argument::Swizzle(argument)) => {
                 return Err(Error::InvalidSwizzleOption(format!("{}", argument).into()));
             }
-            None if TypeId::of::<bool>() == TypeId::of::<T>() => match "true".parse::<T>() {
-                Ok(value) => return Ok(Some(value)),
-                Err(_) => return Err(context.failed_parse("true".into())),
-            },
+            None if TypeId::of::<bool>() == TypeId::of::<T>() => {
+                return Ok("true".parse::<T>().ok());
+            }
             None => return Err(context.missing_option()),
         };
         match argument.parse::<T>() {
-            Ok(value) => {
-                if context.is_valid(&argument) {
-                    Ok(Some(value))
-                } else {
-                    Err(context.invalid_option(argument))
-                }
+            Ok(value) if context.is_valid(&argument) => Ok(Some(value)),
+            Ok(_) => Err(context.invalid_option(argument)),
+            Err(_) if TypeId::of::<bool>() == TypeId::of::<T>() => {
+                context.arguments.push_front(Argument::String(argument));
+                Ok("true".parse::<T>().ok())
             }
-            Err(_) if TypeId::of::<bool>() == TypeId::of::<T>() => match "true".parse::<T>() {
-                Ok(value) => {
-                    context.arguments.push_front(Argument::String(argument));
-                    Ok(Some(value))
-                }
-                Err(_) => Err(context.failed_parse(argument)),
-            },
             Err(_) => Err(context.failed_parse(argument)),
         }
     }
@@ -938,16 +1046,16 @@ impl<P: Clone, I, N: Clone, F: Clone> Clone for Many<P, I, N, F> {
     }
 }
 
-impl<T, P: Parse<Value = Option<T>>, I, N: Fn() -> I, F: Fn(&mut I, T)> Parse for Many<P, I, N, F> {
-    type State = Option<I>;
-    type Value = Option<I>;
+impl<P: Parse, I, N: Fn() -> I, F: Fn(&mut I, P::Value)> Parse for Many<P, I, N, F> {
+    type State = I;
+    type Value = I;
 
     fn initialize(&self, _: Context) -> Result<Self::State, Error> {
-        Ok(None)
+        Ok((self.new)())
     }
 
-    fn parse(&self, state: Self::State, mut context: Context) -> Result<Self::State, Error> {
-        let mut items = state.unwrap_or_else(&self.new);
+    fn parse(&self, mut state: Self::State, mut context: Context) -> Result<Self::State, Error> {
+        let items = &mut state;
         let mut index = 0;
         let count = self.per.map_or(usize::MAX, NonZeroUsize::get);
         let error = loop {
@@ -963,20 +1071,15 @@ impl<T, P: Parse<Value = Option<T>>, I, N: Fn() -> I, F: Fn(&mut I, T)> Parse fo
                 Err(error) => break Some(error),
             };
             let item = match self.parse.finalize(state, context.own()) {
-                Ok(Some(item)) => item,
-                Ok(None) => break None,
+                Ok(item) => item,
                 Err(error) => break Some(error),
             };
-            (self.add)(&mut items, item);
+            (self.add)(items, item);
             index += 1;
         };
-        if index == 0 {
-            match error {
-                Some(error) => Err(error),
-                None => Err(context.missing_option()),
-            }
-        } else {
-            Ok(Some(items))
+        match error {
+            Some(error) if index == 0 => Err(error),
+            _ => Ok(state),
         }
     }
 
@@ -990,7 +1093,7 @@ impl KeyFinder<'_> {
         let mut help = None;
         let mut version = None;
         if let ControlFlow::Break(result) = self
-            .with(self.metas, false, false, true)
+            .with(self.metas, false, false)
             .descend(&mut help, &mut version)
         {
             return result;
@@ -1115,13 +1218,7 @@ impl KeyFinder<'_> {
         )
     }
 
-    fn with<'a>(
-        &'a mut self,
-        metas: &'a [Meta],
-        option: bool,
-        verb: bool,
-        root: bool,
-    ) -> KeyFinder<'a> {
+    fn with<'a>(&'a mut self, metas: &'a [Meta], option: bool, verb: bool) -> KeyFinder<'a> {
         KeyFinder {
             argument: self.argument,
             arguments: self.arguments,
@@ -1135,7 +1232,6 @@ impl KeyFinder<'_> {
             verb,
             option,
             metas,
-            root,
         }
     }
 
@@ -1162,14 +1258,14 @@ impl KeyFinder<'_> {
                 | Meta::Repository(_)
                 | Meta::Summary(_) => *help = help.or(Some(true)),
                 Meta::Version(_) => *version = version.or(Some(true)),
-                Meta::Position if !self.root => {
+                Meta::Position if self.verb || self.option => {
                     if *self.count == self.position {
                         return Break(KeyResult::Position(self.position));
                     } else {
                         *self.count += 1;
                     }
                 }
-                Meta::Name(name) if !self.root => {
+                Meta::Name(name) if self.verb || self.option => {
                     match self.argument {
                         Argument::String(key) => {
                             let mut characters = key.chars();
@@ -1257,32 +1353,30 @@ impl KeyFinder<'_> {
                 Meta::Swizzle => self.swizzle = true,
                 Meta::Group(metas) => {
                     self.indices.push(at);
-                    self.with(metas, self.option, self.verb, self.root)
+                    self.with(metas, self.option, self.verb)
                         .descend(help, version)?;
                     self.indices.pop();
                     at += 1;
                 }
-                Meta::Verb(metas) if self.root => {
+                Meta::Verb(metas) if !self.verb && !self.option => {
                     if self.verb {
                         self.indices.push(at);
-                        self.with(metas, false, true, false)
-                            .descend(help, version)?;
+                        self.with(metas, false, true).descend(help, version)?;
                         self.indices.pop();
                     }
                     at += 1;
                     *help = help.or(Some(true));
                 }
-                Meta::Option(metas) if self.root => {
+                Meta::Option(metas) if !self.verb && !self.option => {
                     if self.option {
                         self.indices.push(at);
-                        self.with(metas, true, false, false)
-                            .descend(help, version)?;
+                        self.with(metas, true, false).descend(help, version)?;
                         self.indices.pop();
                     }
                     at += 1;
                     *help = help.or(Some(true));
                 }
-                Meta::Options(options) if self.root => {
+                Meta::Options(options) if !self.verb && !self.option => {
                     match options {
                         Options::Help { short, long } if self.is_help(*short, *long) => {
                             return Break(KeyResult::Help);
@@ -1350,8 +1444,8 @@ macro_rules! at {
             type State = ($($name::State,)*);
             type Value = ($($name::Value,)*);
 
-            fn initialize(&self, context: Context) -> Result<Self::State, Error> {
-                self.0.initialize(context)
+            fn initialize(&self, mut _context: Context) -> Result<Self::State, Error> {
+                Ok(($(self.0.$index.initialize(_context.own())?,)*))
             }
 
             fn parse(&self, mut _state: Self::State, mut _context: Context) -> Result<Self::State, Error> {
@@ -1364,8 +1458,8 @@ macro_rules! at {
                 Ok(_state)
             }
 
-            fn finalize(&self, state: Self::State, context: Context) -> Result<Self::Value, Error> {
-                self.0.finalize(state, context)
+            fn finalize(&self, _state: Self::State, mut _context: Context) -> Result<Self::Value, Error> {
+                Ok(($(self.0.$index.finalize(_state.$index, _context.own())?,)*))
             }
         }
 
@@ -1462,78 +1556,4 @@ at!(
 at!(
     Or16, T0, 0, T1, 1, T2, 2, T3, 3, T4, 4, T5, 5, T6, 6, T7, 7, T8, 8, T9, 9, T10, 10, T11, 11,
     T12, 12, T13, 13, T14, 14, T15, 15
-);
-at!(
-    Or17, T0, 0, T1, 1, T2, 2, T3, 3, T4, 4, T5, 5, T6, 6, T7, 7, T8, 8, T9, 9, T10, 10, T11, 11,
-    T12, 12, T13, 13, T14, 14, T15, 15, T16, 16
-);
-at!(
-    Or18, T0, 0, T1, 1, T2, 2, T3, 3, T4, 4, T5, 5, T6, 6, T7, 7, T8, 8, T9, 9, T10, 10, T11, 11,
-    T12, 12, T13, 13, T14, 14, T15, 15, T16, 16, T17, 17
-);
-at!(
-    Or19, T0, 0, T1, 1, T2, 2, T3, 3, T4, 4, T5, 5, T6, 6, T7, 7, T8, 8, T9, 9, T10, 10, T11, 11,
-    T12, 12, T13, 13, T14, 14, T15, 15, T16, 16, T17, 17, T18, 18
-);
-at!(
-    Or20, T0, 0, T1, 1, T2, 2, T3, 3, T4, 4, T5, 5, T6, 6, T7, 7, T8, 8, T9, 9, T10, 10, T11, 11,
-    T12, 12, T13, 13, T14, 14, T15, 15, T16, 16, T17, 17, T18, 18, T19, 19
-);
-at!(
-    Or21, T0, 0, T1, 1, T2, 2, T3, 3, T4, 4, T5, 5, T6, 6, T7, 7, T8, 8, T9, 9, T10, 10, T11, 11,
-    T12, 12, T13, 13, T14, 14, T15, 15, T16, 16, T17, 17, T18, 18, T19, 19, T20, 20
-);
-at!(
-    Or22, T0, 0, T1, 1, T2, 2, T3, 3, T4, 4, T5, 5, T6, 6, T7, 7, T8, 8, T9, 9, T10, 10, T11, 11,
-    T12, 12, T13, 13, T14, 14, T15, 15, T16, 16, T17, 17, T18, 18, T19, 19, T20, 20, T21, 21
-);
-at!(
-    Or23, T0, 0, T1, 1, T2, 2, T3, 3, T4, 4, T5, 5, T6, 6, T7, 7, T8, 8, T9, 9, T10, 10, T11, 11,
-    T12, 12, T13, 13, T14, 14, T15, 15, T16, 16, T17, 17, T18, 18, T19, 19, T20, 20, T21, 21, T22,
-    22
-);
-at!(
-    Or24, T0, 0, T1, 1, T2, 2, T3, 3, T4, 4, T5, 5, T6, 6, T7, 7, T8, 8, T9, 9, T10, 10, T11, 11,
-    T12, 12, T13, 13, T14, 14, T15, 15, T16, 16, T17, 17, T18, 18, T19, 19, T20, 20, T21, 21, T22,
-    22, T23, 23
-);
-at!(
-    Or25, T0, 0, T1, 1, T2, 2, T3, 3, T4, 4, T5, 5, T6, 6, T7, 7, T8, 8, T9, 9, T10, 10, T11, 11,
-    T12, 12, T13, 13, T14, 14, T15, 15, T16, 16, T17, 17, T18, 18, T19, 19, T20, 20, T21, 21, T22,
-    22, T23, 23, T24, 24
-);
-at!(
-    Or26, T0, 0, T1, 1, T2, 2, T3, 3, T4, 4, T5, 5, T6, 6, T7, 7, T8, 8, T9, 9, T10, 10, T11, 11,
-    T12, 12, T13, 13, T14, 14, T15, 15, T16, 16, T17, 17, T18, 18, T19, 19, T20, 20, T21, 21, T22,
-    22, T23, 23, T24, 24, T25, 25
-);
-at!(
-    Or27, T0, 0, T1, 1, T2, 2, T3, 3, T4, 4, T5, 5, T6, 6, T7, 7, T8, 8, T9, 9, T10, 10, T11, 11,
-    T12, 12, T13, 13, T14, 14, T15, 15, T16, 16, T17, 17, T18, 18, T19, 19, T20, 20, T21, 21, T22,
-    22, T23, 23, T24, 24, T25, 25, T26, 26
-);
-at!(
-    Or28, T0, 0, T1, 1, T2, 2, T3, 3, T4, 4, T5, 5, T6, 6, T7, 7, T8, 8, T9, 9, T10, 10, T11, 11,
-    T12, 12, T13, 13, T14, 14, T15, 15, T16, 16, T17, 17, T18, 18, T19, 19, T20, 20, T21, 21, T22,
-    22, T23, 23, T24, 24, T25, 25, T26, 26, T27, 27
-);
-at!(
-    Or29, T0, 0, T1, 1, T2, 2, T3, 3, T4, 4, T5, 5, T6, 6, T7, 7, T8, 8, T9, 9, T10, 10, T11, 11,
-    T12, 12, T13, 13, T14, 14, T15, 15, T16, 16, T17, 17, T18, 18, T19, 19, T20, 20, T21, 21, T22,
-    22, T23, 23, T24, 24, T25, 25, T26, 26, T27, 27, T28, 28
-);
-at!(
-    Or30, T0, 0, T1, 1, T2, 2, T3, 3, T4, 4, T5, 5, T6, 6, T7, 7, T8, 8, T9, 9, T10, 10, T11, 11,
-    T12, 12, T13, 13, T14, 14, T15, 15, T16, 16, T17, 17, T18, 18, T19, 19, T20, 20, T21, 21, T22,
-    22, T23, 23, T24, 24, T25, 25, T26, 26, T27, 27, T28, 28, T29, 29
-);
-at!(
-    Or31, T0, 0, T1, 1, T2, 2, T3, 3, T4, 4, T5, 5, T6, 6, T7, 7, T8, 8, T9, 9, T10, 10, T11, 11,
-    T12, 12, T13, 13, T14, 14, T15, 15, T16, 16, T17, 17, T18, 18, T19, 19, T20, 20, T21, 21, T22,
-    22, T23, 23, T24, 24, T25, 25, T26, 26, T27, 27, T28, 28, T29, 29, T30, 30
-);
-at!(
-    Or32, T0, 0, T1, 1, T2, 2, T3, 3, T4, 4, T5, 5, T6, 6, T7, 7, T8, 8, T9, 9, T10, 10, T11, 11,
-    T12, 12, T13, 13, T14, 14, T15, 15, T16, 16, T17, 17, T18, 18, T19, 19, T20, 20, T21, 21, T22,
-    22, T23, 23, T24, 24, T25, 25, T26, 26, T27, 27, T28, 28, T29, 29, T30, 30, T31, 31
 );

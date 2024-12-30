@@ -4,13 +4,7 @@ use crate::{
     style::{Format, Item, Line, Style},
 };
 use core::{fmt, mem::replace, slice::from_ref};
-use std::{
-    borrow::Cow,
-    cell::Cell,
-    fs,
-    ops::{ControlFlow, Deref},
-    sync::Arc,
-};
+use std::{borrow::Cow, cell::Cell, fs, ops::Deref, sync::Arc};
 
 #[derive(Debug, Clone)]
 pub struct Help {
@@ -117,7 +111,7 @@ impl fmt::Display for License {
     }
 }
 
-impl<'a, 'b> Helper<'a, 'b> {
+impl<'b> Helper<'_, 'b> {
     fn space(&mut self, width: usize) -> Result<usize, fmt::Error> {
         for _ in 0..width {
             write!(self.format, " ")?;
@@ -386,7 +380,7 @@ impl<'a, 'b> Helper<'a, 'b> {
         suffix: impl Fn(Helper) -> Result<usize, fmt::Error>,
     ) -> Result<usize, fmt::Error> {
         let mut helper = self.own();
-        let mut width = helper.join(
+        let width = helper.join(
             metas,
             &prefix,
             &suffix,
@@ -396,60 +390,67 @@ impl<'a, 'b> Helper<'a, 'b> {
                 _ => None,
             },
         )?;
-        if width == 0 {
-            width += prefix(helper.own())?;
-            // width += helper.write("Usage:")?;
-            // for key in root.key().as_ref().into_iter().chain(helper.path) {
-            //     width += helper.write(' ')?;
-            //     width += helper.write(key)?;
-            // }
+        // if width == 0 {
+        //     width += prefix(helper.own())?;
+        // width += helper.write("Usage:")?;
+        // for key in root.key().as_ref().into_iter().chain(helper.path) {
+        //     width += helper.write(' ')?;
+        //     width += helper.write(key)?;
+        // }
 
-            match Meta::descend(
-                metas,
-                (),
-                false,
-                usize::MAX,
-                |state, meta| match meta {
-                    Meta::Option(_) => ControlFlow::Break(helper.write(" [OPTIONS]")),
-                    _ => ControlFlow::Continue(state),
-                },
-                |state, _| ControlFlow::Continue(state),
-            ) {
-                ControlFlow::Break(result) => width += result?,
-                ControlFlow::Continue(_) => {}
-            }
+        // match Meta::descend(
+        //     metas,
+        //     (),
+        //     false,
+        //     usize::MAX,
+        //     |state, meta| match meta {
+        //         Meta::Option(_) => ControlFlow::Break(helper.write("
+        // [OPTIONS]")),         _ =>
+        // ControlFlow::Continue(state),     },
+        //     |state, _| ControlFlow::Continue(state),
+        // ) {
+        //     ControlFlow::Break(result) => width += result?,
+        //     ControlFlow::Continue(_) => {}
+        // }
 
-            fn control(result: Result<usize, fmt::Error>) -> ControlFlow<fmt::Error, usize> {
-                result.map_or_else(ControlFlow::Break, ControlFlow::Continue)
-            }
+        // fn control(result: Result<usize, fmt::Error>) ->
+        // ControlFlow<fmt::Error, usize> {     result.
+        // map_or_else(ControlFlow::Break, ControlFlow::Continue)
+        // }
 
-            match Meta::descend(
-                metas,
-                None,
-                false,
-                usize::MAX,
-                |state, _| ControlFlow::Continue(state),
-                |state, meta| match meta {
-                    Meta::Require(value) => ControlFlow::Continue(Some(value)),
-                    Meta::Group(_) => {
-                        if let Some(value) = state {
-                            width += control(helper.write(' '))?;
-                            width += control(helper.write('<'))?;
-                            width += control(helper.write(value))?;
-                            width += control(helper.write('>'))?;
-                        }
-                        ControlFlow::Continue(None)
-                    }
-                    Meta::Option(_) | Meta::Verb(_) => ControlFlow::Continue(None),
-                    _ => ControlFlow::Continue(state),
-                },
-            ) {
-                ControlFlow::Break(error) => Err(error),
-                ControlFlow::Continue(_) => Ok(width + suffix(helper.own())?),
-            }
-        } else {
-            Ok(width)
-        }
+        // match Meta::descend(
+        //     metas,
+        //     (0usize, None),
+        //     false,
+        //     usize::MAX,
+        //     |state, meta| match meta {
+        //         Meta::Require => ControlFlow::Continue((state.0 + 1,
+        // None)),         _ => ControlFlow::Continue(state),
+        //     },
+        //     |state, meta| match meta {
+        //         Meta::Require => ControlFlow::Continue((state.0 - 1,
+        // None)),         Meta::Type(type_name) =>
+        // ControlFlow::Continue((state.0, Some(type_name))),
+        //         Meta::Group(_) => {
+        //             if let Some(value) = state {
+        //                 width += control(helper.write(' '))?;
+        //                 width += control(helper.write('<'))?;
+        //                 width += control(helper.write(value))?;
+        //                 width += control(helper.write('>'))?;
+        //             }
+        //             ControlFlow::Continue(None)
+        //         }
+        //         Meta::Option(_) | Meta::Verb(_) =>
+        // ControlFlow::Continue(None),         _ =>
+        // ControlFlow::Continue(state),     },
+        // ) {
+        //     ControlFlow::Break(error) => Err(error),
+        //     ControlFlow::Continue(_) => Ok(width +
+        // suffix(helper.own())?), }
+        // } else {
+        //     Ok(width)
+        // }
+        Ok(width)
     }
 
     fn columns(&mut self, metas: &[Meta], position: &mut usize, depth: usize) -> Columns {
@@ -499,7 +500,7 @@ impl<'a, 'b> Helper<'a, 'b> {
             |_| Ok(0),
             |mut helper| helper.write(", "),
             |meta| match meta {
-                Meta::Require(_) => Some(Cow::Borrowed("require")),
+                Meta::Require => Some(Cow::Borrowed("require")),
                 Meta::Swizzle => Some(Cow::Borrowed("swizzle")),
                 Meta::Many(_) => Some(Cow::Borrowed("many")),
                 _ => None,

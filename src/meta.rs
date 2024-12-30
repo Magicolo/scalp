@@ -5,7 +5,6 @@ use std::{
     cmp, fmt, hash,
     iter::from_fn,
     ops::{ControlFlow, Deref},
-    slice::from_ref,
     sync::Arc,
 };
 
@@ -18,9 +17,12 @@ pub enum Prefix {
 
 #[derive(Debug, Clone, Eq)]
 pub enum Text {
+    Inline(u8, [u8; 22]),
     Static(&'static str),
     Shared(Arc<str>),
 }
+
+struct Link(u8, [u8; 7], Box<Self>);
 
 #[derive(Debug, Clone)]
 pub enum Meta {
@@ -29,24 +31,24 @@ pub enum Meta {
     Version(Text),
     License(Text, Text),
     Author(Text),
-    Help(Text),
-    Line,
     Usage(Text),
     Summary(Text),
     Home(Text),
+    Help(Text),
     Repository(Text),
     Note(Text),
+    Line,
+    Options(Options),
     Type(Text),
     Valid(Regex),
-    Require(Text),
+    Require,
     Many(Option<NonZeroUsize>),
     Default(Text),
     Environment(Text),
-    Show,
-    Hide,
     Swizzle,
+    Hide,
+    Show,
     Option(Vec<Meta>),
-    Options(Options),
     Verb(Vec<Meta>),
     Group(Vec<Meta>),
 }
@@ -111,7 +113,7 @@ impl Meta {
             Meta::Usage(value) => Meta::Usage(value.clone()),
             Meta::Note(value) => Meta::Note(value.clone()),
             Meta::Type(value) => Meta::Type(value.clone()),
-            Meta::Require(value) => Meta::Require(value.clone()),
+            Meta::Require => Meta::Require,
             Meta::Many(value) => Meta::Many(*value),
             Meta::Default(value) => Meta::Default(value.clone()),
             Meta::Environment(value) => Meta::Environment(value.clone()),
@@ -132,26 +134,6 @@ impl Meta {
                 Meta::Group(metas.iter().map(|meta| meta.clone(depth - 1)).collect())
             }
             Meta::Group(_) => Meta::Group(Vec::new()),
-        }
-    }
-
-    pub(crate) fn require(&self) -> Option<Text> {
-        let control = Self::descend(
-            from_ref(self),
-            None,
-            false,
-            1,
-            |state, meta| {
-                ControlFlow::<(), _>::Continue(match meta {
-                    Meta::Require(value) => state.or(Some(value)),
-                    _ => state,
-                })
-            },
-            |state, _| ControlFlow::Continue(state),
-        );
-        match control {
-            ControlFlow::Continue(Some(value)) => Some(value.clone()),
-            _ => None,
         }
     }
 
@@ -226,8 +208,18 @@ impl Meta {
 }
 
 impl Text {
+    pub(crate) fn filter(value: impl Into<Self>) -> Result<Self, Self> {
+        let value = value.into();
+        if value.chars().all(|value| value.is_whitespace()) {
+            Err(value)
+        } else {
+            Ok(value)
+        }
+    }
+
     pub fn as_str(&self) -> &str {
         match self {
+            Text::Inline(count, buffer) => std::str::from_utf8(&buffer[..*count as usize]).unwrap(),
             Text::Static(value) => value,
             Text::Shared(value) => value,
         }
@@ -262,25 +254,35 @@ impl Deref for Text {
     type Target = str;
 
     fn deref(&self) -> &Self::Target {
-        match self {
-            Text::Static(value) => value,
-            Text::Shared(value) => value,
-        }
+        self.as_str()
     }
 }
 
 impl fmt::Display for Text {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Text::Static(value) => fmt::Display::fmt(value, f),
-            Text::Shared(value) => fmt::Display::fmt(value, f),
-        }
+        fmt::Display::fmt(self.as_str(), f)
     }
 }
 
 impl FromIterator<char> for Text {
     fn from_iter<T: IntoIterator<Item = char>>(iter: T) -> Self {
-        Text::Shared(iter.into_iter().collect::<String>().into())
+        let mut buffer = [0u8; 22];
+        let mut count = 0;
+        let mut iterator = iter.into_iter();
+        while let Some(value) = iterator.next() {
+            let target = &mut buffer[count..];
+            if value.len_utf8() <= target.len() {
+                let slice = value.encode_utf8(target);
+                count += slice.len();
+            } else {
+                let mut string = String::with_capacity(buffer.len() + iterator.size_hint().0);
+                string.push_str(std::str::from_utf8(&buffer[..count]).unwrap());
+                string.push(value);
+                string.extend(iterator);
+                return string.into();
+            }
+        }
+        Text::Inline(count as u8, buffer)
     }
 }
 
@@ -290,11 +292,19 @@ impl From<&'static str> for Text {
     }
 }
 
+impl From<char> for Text {
+    fn from(value: char) -> Self {
+        let mut buffer = [0u8; 22];
+        let slice = value.encode_utf8(&mut buffer);
+        Self::Inline(slice.len() as u8, buffer)
+    }
+}
+
 impl From<Cow<'static, str>> for Text {
     fn from(value: Cow<'static, str>) -> Self {
         match value {
             Cow::Borrowed(value) => Self::Static(value),
-            Cow::Owned(value) => Self::Shared(value.into()),
+            Cow::Owned(value) => value.chars().collect(),
         }
     }
 }
@@ -303,7 +313,7 @@ macro_rules! from {
     ($type: ty) => {
         impl From<$type> for Text {
             fn from(value: $type) -> Self {
-                Self::Shared(value.into())
+                value.chars().collect()
             }
         }
     };

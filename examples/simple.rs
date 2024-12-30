@@ -1,22 +1,3 @@
-<div align="center"> <h1> scalp 0.4.3 </h1> </div>
-
-<p align="center">
-    <em> 
-
-The **S**weet **C**ommand **L**ine **P**arsing library for pretty and highly customizable command-line interfaces. It provides a composable and extensible `Parse` trait that ensures comparative performance to a macro-full approach while offering greater flexibility and understandability.
-    </em>
-</p>
-
-<div align="center"> <a href="examples/scalp.rs"> <img src="resources/screen.png"> </a> </div>
-
-<div align="right">
-    <a href="https://github.com/Magicolo/scalp/actions/workflows/test.yml"> <img src="https://github.com/Magicolo/scalp/actions/workflows/test.yml/badge.svg"> </a>
-    <a href="https://crates.io/crates/scalp"> <img src="https://img.shields.io/crates/v/scalp.svg"> </a>
-</div>
-
----
-## Getting Started
-```rust
 use scalp::*;
 use std::fs;
 
@@ -121,12 +102,3 @@ fn main() -> Result<(), Error> {
     assert_eq!(path, "./");
     Ok(())
 }
-```
-
-_See the [examples](examples/) and [tests](tests/) folder for more detailed examples._
-
----
-### Contribute
-- If you find a bug or have a feature request, please open an [issues](https://github.com/Magicolo/scalp/issues).
-- `scalp` is actively maintained and [pull requests](https://github.com/Magicolo/scalp/pulls) are welcome.
-- If `scalp` was useful to you, please consider leaving a [star](https://github.com/Magicolo/scalp)!

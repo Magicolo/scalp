@@ -49,11 +49,9 @@ macro_rules! scope {
     };
 }
 
-scope!(pub(crate), Root, Group);
 scope!(pub, Option, Option);
 scope!(pub, Group, Group);
 scope!(pub, Verb, Verb);
 
-impl Node for Root {}
 impl Node for Group {}
 impl Node for Verb {}
